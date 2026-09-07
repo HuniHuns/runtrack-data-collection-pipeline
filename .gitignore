@@ -1,0 +1,28 @@
+# ------------------------------------------------------------
+# GitHub에 올릴 파일만 허용
+#   - main.py
+#   - src/**/*.py
+#   - requirements.txt
+#   - .env.example
+#   - .gitignore
+#   - README.md
+# ------------------------------------------------------------
+
+# 기본적으로 모든 파일/폴더 제외
+*
+
+# Git 관리 파일
+!.gitignore
+!.env.example
+!requirements.txt
+
+# 실행 파일
+!main.py
+
+# Python 소스 패키지
+!src/
+!src/**/
+!src/**/*.py
+
+# README.md
+!README.md
