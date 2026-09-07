@@ -1,3 +1,29 @@
+"""
+RUNTRACK의 전처리된 마라톤 일정 데이터를 MySQL에 저장하는 Load 모듈입니다.
+
+Transform 단계에서 생성된 processed CSV를 읽어 필수 컬럼, 결측값,
+중복 데이터를 검증하고 DB 스키마에 맞게 지역값과 컬럼명을 변환합니다.
+MySQL 연결 정보를 .env 파일에서 읽고 SQLAlchemy Engine을 생성한 뒤,
+marathon_schedule, course, schedule_course 테이블에 데이터를 저장합니다.
+
+모든 테이블은 최초 생성 시각과 갱신 시각을 관리하기 위해
+create_date와 update_date 컬럼을 포함합니다.
+
+저장 대상 테이블:
+    marathon_schedule
+        마라톤 대회의 기본 일정 및 연락처 정보
+
+    course
+        대회 종목 정보를 중복 없이 관리
+
+    schedule_course
+        마라톤 일정과 종목의 다대다 관계 관리
+
+반환값:
+    run_load()
+        입력 파일명, DB명, 입력 건수, 신규/수정/관계 저장 건수 요약
+"""
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -281,7 +307,21 @@ def find_latest_processed_csv(
     pattern: str = PROCESSED_CSV_PATTERN,
 ):
     """
-    processed 폴더의 최신 마라톤 일정 csv를 반환한다.
+    data/processed 폴더에서 가장 최근 processed CSV 파일을 반환한다.
+
+    Args:
+        directory:
+            processed CSV 파일이 저장된 폴더
+
+        pattern:
+            검색할 processed CSV 파일명 패턴
+
+    Returns:
+        파일명 정렬 기준으로 가장 최근 processed CSV 파일 경로
+
+    Raises:
+        FileNotFoundError:
+            processed 폴더가 없거나 MySQL에 적재할 CSV 파일이 없는 경우
     """
 
     if not directory.exists():
@@ -299,7 +339,18 @@ def load_processed_csv(
     file_path: Path,
 ) -> pd.DataFrame:
     """
-    전처리 완료된 csv를 DataFrame으로 불러온다.
+    전처리 완료된 processed CSV를 지정한 자료형의 DataFrame으로 읽는다.
+
+    Args:
+        file_path:
+            읽을 processed CSV 파일 경로
+
+    Returns:
+        문자열과 날짜 자료형이 지정된 마라톤 일정 DataFrame
+
+    Raises:
+        FileNotFoundError:
+            지정한 processed CSV 파일이 존재하지 않는 경우
     """
 
     if not file_path.is_file():
@@ -331,7 +382,21 @@ def load_database_config(
     env_path: Path = ENV_PATH,
 ) -> dict[str, str | int]:
     """
-    .env 파일에서 MySQL 연결 정보를 읽는다.
+    .env 파일에서 MySQL 연결 정보를 읽고 필수 환경변수를 검증한다.
+
+    Args:
+        env_path:
+            MySQL 연결 정보가 저장된 .env 파일 경로
+
+    Returns:
+        host, port, database, username, password를 담은 연결 설정
+
+    Raises:
+        FileNotFoundError:
+            .env 파일이 존재하지 않는 경우
+
+        ValueError:
+            필수 환경변수가 없거나 DB_PORT가 정수가 아닌 경우
     """
 
     if not env_path.is_file():
@@ -363,7 +428,14 @@ def create_mysql_engine(
     config: dict[str, str | int],
 ) -> Engine:
     """
-    PyMySQL을 사용하는 SQLAlchemy Engine을 생성한다.
+    MySQL 연결 설정으로 PyMySQL 기반 SQLAlchemy Engine을 생성한다.
+
+    Args:
+        config:
+            load_database_config()가 반환한 MySQL 연결 설정
+
+    Returns:
+        연결 유효성 확인과 재사용 설정이 적용된 SQLAlchemy Engine
     """
 
     database_url = URL.create(
@@ -389,7 +461,18 @@ def test_mysql_connection(
     engine: Engine,
 ) -> dict[str, str]:
     """
-    연결된 MySQL 서버 정보를 확인한다.
+    MySQL 연결 상태와 서버 정보를 확인한다.
+
+    Args:
+        engine:
+            연결을 확인할 SQLAlchemy Engine
+
+    Returns:
+        MySQL 버전, 연결 데이터베이스명, 현재 사용자 정보를 담은 딕셔너리
+
+    Raises:
+        SQLAlchemyError:
+            MySQL 연결 또는 확인 쿼리 실행에 실패한 경우
     """
 
     query = text(
@@ -425,7 +508,16 @@ def validate_processed_data(
     df: pd.DataFrame,
 ) -> None:
     """
-    MySQL 적재 전 전처리 데이터를 검증한다.
+    MySQL 적재 전 processed DataFrame의 필수 조건을 검증한다.
+
+    Args:
+        df:
+            Transform 단계에서 생성된 마라톤 일정 DataFrame
+
+    Raises:
+        ValueError:
+            데이터가 비어 있거나 필수 컬럼 누락, NOT NULL 컬럼 결측,
+            동일 대회 중복 데이터가 존재하는 경우
     """
 
     if df.empty:
@@ -478,7 +570,16 @@ def parse_courses(
     value,
 ) -> list[str]:
     """
-    course 문자열을 개별 Course로 분리한다.
+    | 구분자로 저장된 course 문자열을 개별 종목 목록으로 분리한다.
+
+    중복 종목은 최초 등장 순서를 유지하면서 제거한다.
+
+    Args:
+        value:
+            하나 이상의 대회 종목이 저장된 문자열
+
+    Returns:
+        공백과 중복을 제거한 Course 이름 목록
     """
 
     if pd.isna(value):
@@ -499,7 +600,20 @@ def create_tables(
     engine: Engine,
 ) -> None:
     """
-    기존 MySQL Database에 필요한 테이블을 생성한다.
+    RUNTRACK 적재에 필요한 MySQL 테이블이 없으면 생성한다.
+
+    생성 대상:
+        - course
+        - marathon_schedule
+        - schedule_course
+
+    Args:
+        engine:
+            테이블을 생성할 MySQL SQLAlchemy Engine
+
+    Raises:
+        SQLAlchemyError:
+            테이블 생성 쿼리 실행에 실패한 경우
     """
 
     with engine.begin() as connection:
@@ -521,7 +635,14 @@ def to_database_value(
     value,
 ):
     """
-    Pandas 값을 MySQL에 저장 가능한 값으로 변환한다.
+    Pandas 결측값을 MySQL에 저장 가능한 None으로 변환한다.
+
+    Args:
+        value:
+            DB 저장용으로 변환할 Pandas 또는 Python 값
+
+    Returns:
+        결측값이면 None, 그렇지 않으면 원래 값
     """
 
     if pd.isna(value):
@@ -533,6 +654,17 @@ def to_database_value(
 def to_database_date(
     value,
 ):
+    """
+    Pandas 날짜 값을 MySQL DATE에 저장할 Python date로 변환한다.
+
+    Args:
+        value:
+            변환할 날짜 값
+
+    Returns:
+        Python date 또는 결측값인 경우 None
+    """
+
     if pd.isna(value):
         return None
 
@@ -544,6 +676,21 @@ def to_database_date(
 def to_database_time(
     value,
 ):
+    """
+    HH:MM 문자열을 MySQL TIME에 저장할 Python time으로 변환한다.
+
+    Args:
+        value:
+            변환할 집결시간 값
+
+    Returns:
+        Python time 또는 결측값인 경우 None
+
+    Raises:
+        ValueError:
+            값이 HH:MM 형식과 일치하지 않는 경우
+    """
+
     if pd.isna(value):
         return None
 
@@ -558,8 +705,17 @@ def get_or_create_course(
     course_name: str,
 ) -> int:
     """
-    Course가 없으면 생성하고,
-    이미 존재하면 기존 course_id를 반환한다.
+    Course가 없으면 생성하고 이미 존재하면 기존 course_id를 반환한다.
+
+    Args:
+        connection:
+            현재 적재 트랜잭션의 SQLAlchemy Connection
+
+        course_name:
+            저장하거나 조회할 대회 종목명
+
+    Returns:
+        신규 또는 기존 Course의 course_id
     """
 
     result = connection.execute(
@@ -579,6 +735,19 @@ def find_schedule_id(
     connection,
     record: dict[str, Any],
 ) -> int | None:
+    """
+    대회명, 개최일, 개최장소를 기준으로 기존 일정의 schedule_id를 조회한다.
+
+    Args:
+        connection:
+            현재 적재 트랜잭션의 SQLAlchemy Connection
+
+        record:
+            title, event_date, event_field를 포함한 마라톤 일정 레코드
+
+    Returns:
+        기존 일정의 schedule_id 또는 존재하지 않는 경우 None
+    """
 
     schedule_id = (
         connection.execute(
@@ -610,12 +779,20 @@ def upsert_marathon_schedule(
     record: dict[str, Any],
 ) -> tuple[int, bool]:
     """
-    신규 대회는 INSERT,
-    기존 대회는 UPDATE한다.
+    마라톤 일정이 없으면 INSERT하고 기존 일정이면 UPDATE한다.
+
+    기존 일정의 식별은 title, event_date, event_field 조합으로 수행하며,
+    UPDATE 시 update_date를 현재 시각으로 갱신한다.
+
+    Args:
+        connection:
+            현재 적재 트랜잭션의 SQLAlchemy Connection
+
+        record:
+            marathon_schedule 테이블에 저장할 대회 데이터
 
     Returns:
-        schedule_id,
-        신규 저장 여부
+        schedule_id와 신규 저장 여부를 담은 튜플
     """
 
     schedule_id = (
@@ -662,7 +839,22 @@ def save_schedule_courses(
     course_names: list[str],
 ) -> int:
     """
-    한 대회와 Course의 관계를 저장한다.
+    한 마라톤 일정과 Course의 관계를 schedule_course 테이블에 저장한다.
+
+    기존 schedule_id의 관계를 삭제한 뒤 현재 course_names 기준으로 다시 생성한다.
+
+    Args:
+        connection:
+            현재 적재 트랜잭션의 SQLAlchemy Connection
+
+        schedule_id:
+            관계를 저장할 marathon_schedule의 기본키
+
+        course_names:
+            연결할 Course 이름 목록
+
+    Returns:
+        이번 일정에 저장한 schedule_course 관계 건수
     """
 
     connection.execute(
@@ -705,8 +897,20 @@ def load_marathon_schedules(
     df: pd.DataFrame,
 ) -> dict[str, int]:
     """
-    전처리 데이터를 MarathonSchedule,
-    Course, ScheduleCourse 테이블에 저장한다.
+    전처리 DataFrame을 marathon_schedule, course, schedule_course 테이블에 저장한다.
+
+    각 행의 종목 문자열을 분리하고 DB 저장용 자료형으로 변환한 뒤
+    일정 INSERT/UPDATE와 Course 관계 저장을 하나의 트랜잭션에서 수행한다.
+
+    Args:
+        engine:
+            데이터를 저장할 MySQL SQLAlchemy Engine
+
+        df:
+            DB 컬럼명으로 변환된 마라톤 일정 DataFrame
+
+    Returns:
+        신규 일정 수, 수정 일정 수, Course 관계 저장 수를 담은 딕셔너리
     """
 
     inserted_count = 0
@@ -813,7 +1017,21 @@ def validate_loaded_schedules(
     source_df: pd.DataFrame,
 ) -> None:
     """
-    CSV의 모든 대회가 DB에 존재하는지 검증한다.
+    processed CSV의 모든 대회 키가 MySQL에 존재하는지 검증한다.
+
+    대회명, 개최일, 개최장소를 기준으로 원본 DataFrame과
+    marathon_schedule 테이블 조회 결과를 비교한다.
+
+    Args:
+        engine:
+            적재 결과를 조회할 MySQL SQLAlchemy Engine
+
+        source_df:
+            실제 DB 적재에 사용한 마라톤 일정 DataFrame
+
+    Raises:
+        ValueError:
+            입력 데이터 중 DB에서 찾을 수 없는 대회가 존재하는 경우
     """
 
     db_schedule_df = pd.read_sql(
@@ -863,8 +1081,25 @@ def run_load(
     processed_csv_file: Path | None = None,
 ) -> dict[str, Any]:
     """
-    최신 processed CSV 탐색부터
-    MySQL 적재 및 검증까지 실행한다.
+    processed CSV 탐색부터 검증, MySQL 연결, 테이블 생성, 적재 검증까지 실행한다.
+
+    Args:
+        processed_csv_file:
+            MySQL에 적재할 processed CSV 파일 경로.
+            지정하지 않으면 data/processed의 최신 CSV 사용
+
+    Returns:
+        입력 파일명, 데이터베이스명, 입력 건수, 신규/수정/관계 저장 건수를 담은 딕셔너리
+
+    Raises:
+        FileNotFoundError:
+            processed CSV 또는 .env 파일을 찾을 수 없는 경우
+
+        ValueError:
+            입력 데이터 검증 또는 DB 적재 결과 검증에 실패한 경우
+
+        SQLAlchemyError:
+            MySQL 연결, 테이블 생성 또는 데이터 저장에 실패한 경우
     """
 
     if processed_csv_file is None:
@@ -923,4 +1158,16 @@ def run_load(
     finally:
         engine.dispose()
 
+if __name__ == '__main__':
+    try:
+        run_load()
 
+    except SQLAlchemyError as error:
+        print('MySQL 처리 중 오류가 발생했습니다.')
+        print(f'오류 내용 : {error}')
+        raise SystemExit(1) from error
+
+    except (FileNotFoundError, OSError, ValueError) as error:
+        print('파일 처리 또는 데이터 검증에 실패했습니다.')
+        print(f'오류 내용 : {error}')
+        raise SystemExit(1) from error

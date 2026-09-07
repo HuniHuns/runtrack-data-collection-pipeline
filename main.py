@@ -1,21 +1,39 @@
 """
-RUNTRACK 마라톤 일정 ETL 파이프라인 실행 파일
+RUNTRACK 마라톤 일정 데이터 수집 ETL 파이프라인 실행 파일입니다.
 
-실행 흐름
-1. Extract
-   run_extract()
-   -> runfor.kr에서 마라톤 일정을 수집하고 RAW CSV 경로 반환
+이 파일은 프로젝트의 실행 진입점(entry point)으로,
+마라톤 일정 수집, 데이터 전처리, MySQL 저장 작업을 순서대로 실행합니다.
 
-2. Transform
-   run_transform(raw_csv_file)
-   -> RAW CSV를 정제/표준화하고 processed CSV 경로 반환
+[사용 모듈]
+1. extract.py
+    - runfor.kr의 동적 대회 목록을 Selenium으로 로딩합니다.
+    - 각 대회 상세 페이지에서 일정 정보를 수집합니다.
+    - 수집 결과를 원본 RAW CSV 파일로 저장합니다.
 
-3. Load
-   run_load(processed_csv_file)
-   -> processed CSV를 MySQL에 적재하고 결과 요약 반환
+2. transform.py
+    - RAW CSV 파일을 읽습니다.
+    - 지역, 장소, 종목, 날짜, 접수기간, 집결시간 등을 표준화합니다.
+    - 전화번호와 이메일 형식을 검증합니다.
+    - 전처리 결과를 processed CSV 파일로 저장합니다.
 
-프로젝트 루트에서 다음과 같이 실행한다.
-    python main.py
+3. load.py
+    - processed CSV 파일을 읽고 MySQL 저장 전 데이터를 검증합니다.
+    - marathon_schedule, course, schedule_course 테이블을 생성합니다.
+    - 마라톤 일정과 코스 관계를 INSERT 또는 UPDATE 방식으로 저장합니다.
+
+[실행 흐름]
+run_extract()
+-> RAW CSV 파일 경로 반환
+
+run_transform(raw_csv_file)
+-> processed CSV 파일 경로 반환
+
+run_load(processed_csv_file)
+-> MySQL 저장 결과 요약 반환
+
+[실행 결과]
+각 단계에서 생성한 파일 경로와 MySQL 저장 결과를 출력하고,
+RAW CSV 경로, processed CSV 경로, MySQL 저장 결과를 튜플로 반환합니다.
 """
 
 from pathlib import Path
@@ -30,12 +48,24 @@ from src.data_collection_pipeline import (
     run_load,
 )
 
+## --------------------------------------
+## 프로젝트 경로 설정
+## --------------------------------------
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
 
 def main() -> tuple[Path, Path, dict[str, object]]:
-    """마라톤 일정 Extract -> Transform -> Load 전체 파이프라인을 실행한다."""
+    """
+    RUNTRACK 마라톤 일정 Extract, Transform, Load 작업을 순서대로 실행한다.
+
+    Returns:
+        다음 실행 결과를 저장한 튜플
+
+        1. Extract 단계에서 생성한 RAW CSV 파일 경로
+        2. Transform 단계에서 생성한 processed CSV 파일 경로
+        3. Load 단계의 MySQL 저장 결과 요약
+    """
 
     print('=' * 70)
     print('RUNTRACK 마라톤 일정 ETL 파이프라인 시작')

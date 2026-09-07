@@ -1,3 +1,22 @@
+"""
+RUNTRACK의 마라톤 일정 원본 데이터를 수집하는 Extract 모듈입니다.
+
+runfor.kr 메인 페이지는 JavaScript 실행 후 대회 목록이 표시되므로
+Selenium을 사용하여 동적 목록을 로딩하고 더보기 버튼을 처리합니다.
+대회별 상세 페이지는 requests와 BeautifulSoup으로 요청 및 파싱합니다.
+
+수집한 데이터는 가공하지 않은 RAW DataFrame으로 구성하고,
+수집 시각이 포함된 CSV 파일로 data/raw 폴더에 저장합니다.
+
+저장 구조:
+    data/raw/
+        marathon_schedule_raw_YYMMDD_HHMMSS.csv
+
+반환값:
+    run_extract()
+        생성된 RAW CSV 파일 경로
+"""
+
 from pathlib import Path
 from datetime import datetime
 
@@ -52,6 +71,17 @@ RAW_COLUMNS = [
 ]
 
 def create_driver(headless: bool = True) -> webdriver.Chrome:
+    """
+    Selenium Chrome WebDriver를 생성한다.
+
+    Args:
+        headless:
+            True이면 브라우저 UI를 표시하지 않는 headless 모드로 실행
+
+    Returns:
+        설정이 적용된 Selenium Chrome WebDriver
+    """
+    
     options = Options()
 
     if headless:
@@ -63,6 +93,24 @@ def create_driver(headless: bool = True) -> webdriver.Chrome:
 
 
 def load_all_marathon(driver):
+    """
+    대회 목록을 기다린 뒤 더보기 버튼을 클릭하여 추가 대회를 로딩한다.
+
+    Args:
+        driver:
+            runfor.kr 메인 페이지를 제어하는 Selenium WebDriver
+
+    Returns:
+        더보기 처리 후 DOM에서 확인한 대회 링크 요소 수
+
+    Raises:
+        TimeoutException:
+            대회 목록이 제한 시간 안에 로딩되지 않거나 더보기 후 목록이 증가하지 않는 경우
+
+        NoSuchElementException:
+            더보기 버튼을 찾을 수 없는 경우
+    """
+
     wait = WebDriverWait(driver, WAIT_TIMEOUT)
 
     try:
@@ -122,6 +170,21 @@ def load_all_marathon(driver):
 
 
 def parse_race_element(element):
+    """
+    대회 카드 요소에서 대회 제목과 상세 페이지 URL을 추출한다.
+
+    Args:
+        element:
+            한 건의 대회 카드 Selenium WebElement
+
+    Returns:
+        title과 detail_url을 담은 딕셔너리
+
+    Raises:
+        NoSuchElementException:
+            대회 카드에서 제목 요소를 찾을 수 없는 경우
+    """
+
     try:
         title = element.find_element(By.CSS_SELECTOR, 'strong.race-card-title').text.strip()
         detail_url = element.get_attribute('href')
@@ -136,6 +199,17 @@ def parse_race_element(element):
 
 
 def collect_marathon_url(driver):
+    """
+    현재 페이지에 로딩된 대회 카드의 제목과 상세 URL을 수집한다.
+
+    Args:
+        driver:
+            대회 목록 페이지를 제어하는 Selenium WebDriver
+
+    Returns:
+        대회 제목과 상세 URL 딕셔너리의 목록
+    """
+
     race_cards = driver.find_elements(By.CSS_SELECTOR, '.race-card')
 
     race_list = list()
@@ -148,6 +222,22 @@ def collect_marathon_url(driver):
 
 
 def collect_race_detail(url):
+    """
+    대회 상세 페이지를 요청하고 필요한 일정 및 연락처 정보를 파싱한다.
+
+    Args:
+        url:
+            수집할 대회 상세 페이지 URL
+
+    Returns:
+        대회명, 상태, 지역, 일정, 집결시간, 장소, 종목, 주최,
+        접수기간, 공식 URL, 전화번호, 이메일을 담은 딕셔너리
+
+    Raises:
+        requests.exceptions.RequestException:
+            상세 페이지 HTTP 요청에 실패한 경우
+    """
+
     response = requests.get(url, timeout=(10, 30))
     response.raise_for_status()
 
@@ -186,7 +276,27 @@ def collect_race_detail(url):
 
 
 def crawl_marathon_schedule(headless: bool = True) -> pd.DataFrame:
-    """웹페이지에서 전체 마라톤 일정 상세 정보를 수집한다."""
+    """
+    runfor.kr에서 전체 마라톤 일정 상세 정보를 수집하여 DataFrame으로 반환한다.
+
+    Selenium으로 동적 대회 목록을 로딩한 뒤 각 상세 URL을 수집하고,
+    상세 페이지는 HTTP 요청으로 파싱하여 RAW_COLUMNS 순서의 DataFrame을 만든다.
+
+    Args:
+        headless:
+            True이면 Selenium Chrome을 headless 모드로 실행
+
+    Returns:
+        전체 마라톤 일정 원본 데이터가 저장된 DataFrame
+
+    Raises:
+        TimeoutException:
+            대회 목록 로딩 또는 더보기 처리에 실패한 경우
+
+        requests.exceptions.RequestException:
+            대회 상세 페이지 요청에 실패한 경우
+    """
+
     driver = create_driver(headless=headless)
 
     try:
@@ -213,7 +323,17 @@ def crawl_marathon_schedule(headless: bool = True) -> pd.DataFrame:
 
 
 def build_raw_file_path(directory: Path = RAW_DIR) -> Path:
-    """현재 시각을 포함한 RAW CSV 저장 경로를 만든다."""
+    """
+    현재 시각을 포함한 RAW CSV 파일 경로를 생성한다.
+
+    Args:
+        directory:
+            RAW CSV를 저장할 기본 폴더
+
+    Returns:
+        marathon_schedule_raw_YYMMDD_HHMMSS.csv 형식의 파일 경로
+    """
+
     timestamp = datetime.now().strftime('%y%m%d_%H%M%S')
     return directory / f'marathon_schedule_raw_{timestamp}.csv'
 
@@ -222,7 +342,27 @@ def save_raw_csv(
     df: pd.DataFrame,
     directory: Path = RAW_DIR,
 ) -> Path:
-    """수집 결과를 UTF-8-SIG CSV로 저장한다."""
+    """
+    동적 크롤링 수집 결과를 raw 배치 폴더 안에 CSV 파일로 저장한다.
+
+    임시 파일에 먼저 저장한 뒤 최종 파일명으로 교체하여
+    저장 도중 실패한 불완전한 파일이 남는 것을 방지한다.
+
+    Args:
+        df:
+            저장할 마라톤 일정 원본 DataFrame
+
+        directory:
+            RAW CSV를 저장할 폴더
+
+    Returns:
+        저장이 완료된 RAW CSV 파일 경로
+
+    Raises:
+        OSError:
+            폴더 생성 또는 CSV 파일 저장에 실패한 경우
+    """
+
     directory.mkdir(parents=True, exist_ok=True)
     file_path = build_raw_file_path(directory)
     temp_path = file_path.with_suffix('.tmp.csv')
@@ -242,7 +382,21 @@ def verify_saved_raw_csv(
     saved_file: Path,
     original_df: pd.DataFrame,
 ) -> None:
-    """RAW CSV 저장 전후의 행 수와 컬럼 순서를 검증한다."""
+    """
+    저장한 RAW CSV를 다시 읽고 저장 전후의 행 수와 컬럼 순서를 검증한다.
+
+    Args:
+        saved_file:
+            저장이 완료된 RAW CSV 파일 경로
+
+        original_df:
+            CSV 저장 전 원본 DataFrame
+
+    Raises:
+        ValueError:
+            저장 전후의 행 수 또는 컬럼 순서가 다른 경우
+    """
+    
     saved_df = pd.read_csv(saved_file)
 
     if len(saved_df) != len(original_df):
@@ -256,7 +410,33 @@ def run_extract(
     headless: bool = True,
     output_dir: Path | None = None,
 ) -> Path:
-    """마라톤 일정을 수집하고 RAW CSV 파일 경로를 반환한다."""
+    """
+    마라톤 일정 수집부터 RAW CSV 저장 및 검증까지 순서대로 실행한다.
+
+    Args:
+        headless:
+            True이면 Selenium Chrome을 headless 모드로 실행
+
+        output_dir:
+            RAW CSV를 저장할 폴더. 지정하지 않으면 기본 data/raw 폴더 사용
+
+    Returns:
+        이번 Extract 단계에서 생성된 RAW CSV 파일 경로
+
+    Raises:
+        TimeoutException:
+            Selenium 대회 목록 로딩에 실패한 경우
+
+        requests.exceptions.RequestException:
+            상세 페이지 HTTP 요청에 실패한 경우
+
+        OSError:
+            RAW CSV 저장에 실패한 경우
+
+        ValueError:
+            저장 후 검증에 실패한 경우
+    """
+
     target_dir = output_dir if output_dir is not None else RAW_DIR
 
     print('=' * 70)
@@ -271,3 +451,12 @@ def run_extract(
     print(f'RAW csv 저장 완료 : {saved_file}')
     return saved_file
 
+if __name__ == '__main__':
+    try:
+        run_extract()
+
+    except (TimeoutException, RequestException, OSError, ValueError) as error:
+        print('웹페이지 동적 크롤링 작업에 실패했습니다.')
+        print(f'오류 내용 : {error}')
+
+        raise SystemExit(1) from error

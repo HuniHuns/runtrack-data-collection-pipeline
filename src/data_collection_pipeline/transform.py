@@ -1,3 +1,20 @@
+"""
+RUNTRACK 마라톤 일정 RAW 데이터를 정제하고 표준화하는 Transform 모듈입니다.
+
+Extract 단계에서 생성된 RAW CSV를 읽어 문자열과 결측 표현을 정리하고,
+지역, 장소, 종목, 날짜, 접수기간, 집결시간, 연락처 형식을 변환합니다.
+전처리 후에는 허용 지역, 시간 형식, 전화번호, 이메일 등을 검증하고
+수집 시각이 포함된 processed CSV 파일로 저장합니다.
+
+저장 구조:
+    data/processed/
+        marathon_schedule_processed_YYMMDD_HHMMSS.csv
+
+반환값:
+    run_transform()
+        생성된 processed CSV 파일 경로
+"""
+
 from pathlib import Path
 from datetime import datetime
 import re
@@ -84,6 +101,24 @@ def find_latest_raw_csv(
     directory: Path = RAW_DIR,
     pattern: str = RAW_CSV_PATTERN,
 ):
+    """
+    data/raw 폴더에서 가장 최근 RAW CSV 파일을 반환한다.
+
+    Args:
+        directory:
+            RAW CSV 파일이 저장된 폴더
+
+        pattern:
+            검색할 RAW CSV 파일명 패턴
+
+    Returns:
+        파일명 정렬 기준으로 가장 최근 RAW CSV 파일 경로
+
+    Raises:
+        FileNotFoundError:
+            RAW 폴더가 없거나 전처리할 RAW CSV 파일이 없는 경우
+    """
+        
     if not directory.exists():
         raise FileNotFoundError(f'RAW 데이터 폴더가 없습니다. {directory}')
 
@@ -96,6 +131,21 @@ def find_latest_raw_csv(
 
 
 def load_raw_csv(file_path: Path) -> pd.DataFrame:
+    """
+    RAW CSV 파일을 문자열 자료형의 DataFrame으로 읽어 반환한다.
+
+    Args:
+        file_path:
+            읽을 RAW CSV 파일 경로
+
+    Returns:
+        모든 컬럼을 Pandas string dtype으로 읽은 DataFrame
+
+    Raises:
+        FileNotFoundError:
+            지정한 RAW CSV 파일이 존재하지 않는 경우
+    """
+
     if not file_path.is_file():
         raise FileNotFoundError(f'RAW csv 파일이 없습니다. : {file_path}')
 
@@ -103,6 +153,18 @@ def load_raw_csv(file_path: Path) -> pd.DataFrame:
 
 
 def validate_input_marathon(schedules_df: pd.DataFrame) -> None:
+    """
+    전처리 입력 DataFrame의 데이터 존재 여부와 필수 컬럼을 검증한다.
+
+    Args:
+        schedules_df:
+            Extract 단계에서 생성된 마라톤 일정 DataFrame
+
+    Raises:
+        ValueError:
+            입력 데이터가 비어 있거나 필수 컬럼이 누락된 경우
+    """
+
     if schedules_df.empty:
         raise ValueError('전처리할 마라톤 일정 데이터가 비어 있습니다.')
 
@@ -115,6 +177,17 @@ def validate_input_marathon(schedules_df: pd.DataFrame) -> None:
 def clean_string_columns(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    전체 컬럼을 문자열로 정리하고 공통 결측 표현을 Pandas NA로 변환한다.
+
+    Args:
+        df:
+            문자열 정리가 필요한 원본 DataFrame
+
+    Returns:
+        좌우 공백 제거와 결측값 표준화가 완료된 DataFrame
+    """
+
     clean_df = df.copy()
 
     for column in clean_df.columns:
@@ -143,6 +216,20 @@ def clean_string_columns(
 def parse_date(
     value,
 ):
+    """
+    다양한 날짜 문자열을 Pandas Timestamp로 변환한다.
+
+    YYYY년 M월 D일 형식은 YYYY-MM-DD 형태로 정규화한 뒤 변환하며,
+    변환할 수 없는 값은 NaT로 처리한다.
+
+    Args:
+        value:
+            변환할 날짜 값
+
+    Returns:
+        변환된 Timestamp 또는 변환할 수 없는 경우 NaT
+    """
+
     if pd.isna(value):
         return pd.NaT
 
@@ -175,6 +262,20 @@ def parse_date(
 def split_registration_period(
     value,
 ):
+    """
+    접수기간 문자열을 접수 시작일과 종료일로 분리한다.
+
+    물결표(~, ～)를 기준으로 최대 한 번 분리한 뒤 각 값을 parse_date()로 변환한다.
+
+    Args:
+        value:
+            접수 시작일과 종료일이 함께 저장된 문자열
+
+    Returns:
+        접수 시작일과 종료일 Timestamp 튜플.
+        값이 없거나 형식이 올바르지 않으면 (NaT, NaT) 반환
+    """
+
     if pd.isna(value):
         return pd.NaT, pd.NaT
 
@@ -196,6 +297,20 @@ def split_registration_period(
 def parse_assembly_time(
     value,
 ):
+    """
+    집결시간 문자열에서 유효한 시간을 추출하여 HH:MM 형식으로 변환한다.
+
+    오전/오후 또는 AM/PM 표현을 반영하고 여러 시간이 포함된 경우
+    유효한 시간 중 가장 이른 시간을 선택한다.
+
+    Args:
+        value:
+            변환할 집결시간 문자열
+
+    Returns:
+        HH:MM 형식의 시간 문자열 또는 변환할 수 없는 경우 Pandas NA
+    """
+
     if pd.isna(value):
         return pd.NA
 
@@ -262,11 +377,36 @@ def parse_assembly_time(
 def preprocessing_marathon_schedule(
     schedule_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    마라톤 일정 RAW DataFrame을 분석 및 DB 저장이 가능한 구조로 전처리한다.
+
+    주요 처리:
+        - 문자열 및 결측 표현 정리
+        - 지역값 표준화
+        - 장소의 (예정) 표현 제거
+        - 종목 구분자를 |로 통일
+        - 대회일 날짜형 변환
+        - 접수기간 시작일/종료일 분리
+        - 집결시간 HH:MM 변환
+        - 전화번호와 이메일 형식 검증
+        - 최종 컬럼 순서 정리
+
+    Args:
+        schedule_df:
+            Extract 단계의 RAW 마라톤 일정 DataFrame
+
+    Returns:
+        COLUMN_ORDER 순서로 정리된 전처리 DataFrame
+
+    Raises:
+        ValueError:
+            입력 데이터가 비어 있거나 필수 컬럼이 누락된 경우
+    """
+    
     validate_input_marathon(schedule_df)
 
     processed_df = clean_string_columns(schedule_df)
 
-    ## region 표준화
     processed_df['region'] = processed_df['region'].replace(REGION_MAP)
 
     ## location 공백 및 (예정) 제거
@@ -372,6 +512,21 @@ def preprocessing_marathon_schedule(
 def validate_processed_marathon(
     df: pd.DataFrame,
 ) -> dict:
+    """
+    전처리 결과의 컬럼 구조와 주요 값의 품질을 검증한다.
+
+    Args:
+        df:
+            preprocessing_marathon_schedule()가 반환한 DataFrame
+
+    Returns:
+        행 수, 컬럼 수, 전체 결측값 수를 담은 검증 요약 딕셔너리
+
+    Raises:
+        ValueError:
+            컬럼 순서, 지역값, 장소, 종목 구분자, 시간, 전화번호,
+            이메일 형식 중 하나 이상이 검증 조건을 만족하지 않는 경우
+    """
 
     errors = []
 
@@ -477,6 +632,16 @@ def validate_processed_marathon(
 def build_processed_file_path(
     directory: Path = PROCESSED_DIR,
 ) -> Path:
+    """
+    현재 시각을 포함한 processed CSV 파일 경로를 생성한다.
+
+    Args:
+        directory:
+            processed CSV를 저장할 기본 폴더
+
+    Returns:
+        marathon_schedule_processed_YYMMDD_HHMMSS.csv 형식의 파일 경로
+    """
 
     timestamp = datetime.now().strftime('%y%m%d_%H%M%S')
 
@@ -488,6 +653,24 @@ def build_processed_file_path(
 def save_processed_csv(
     df: pd.DataFrame,
 ) -> Path:
+    """
+    전처리 DataFrame을 하나의 processed CSV 파일로 저장한다.
+
+    임시 파일에 먼저 저장한 뒤 최종 파일로 교체하여
+    저장 도중 실패한 불완전한 파일이 남는 것을 방지한다.
+
+    Args:
+        df:
+            저장할 전처리 DataFrame
+
+    Returns:
+        저장이 완료된 processed CSV 파일 경로
+
+    Raises:
+        OSError:
+            폴더 생성 또는 CSV 저장에 실패한 경우
+    """
+
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
     file_path = build_processed_file_path()
@@ -515,6 +698,24 @@ def verify_saved_csv(
     saved_file: Path,
     original_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    저장한 processed CSV를 다시 읽고 저장 전후의 행 수와 컬럼 순서를 검증한다.
+
+    Args:
+        saved_file:
+            저장이 완료된 processed CSV 파일 경로
+
+        original_df:
+            CSV 저장 전 전처리 DataFrame
+
+    Returns:
+        저장된 CSV를 다시 읽은 DataFrame
+
+    Raises:
+        ValueError:
+            저장 전후의 행 수 또는 컬럼 순서가 다른 경우
+    """
+
     saved_df = pd.read_csv(saved_file)
 
     if len(saved_df) != len(original_df):
@@ -532,7 +733,30 @@ def run_transform(
     raw_csv_file: Path | None = None,
     output_dir: Path | None = None,
 ) -> Path:
-    """RAW CSV를 전처리하고 processed CSV 파일 경로를 반환한다."""
+    """
+    RAW CSV 로딩부터 전처리, 검증, processed CSV 저장까지 순서대로 실행한다.
+
+    Args:
+        raw_csv_file:
+            전처리할 RAW CSV 파일 경로. 지정하지 않으면 최신 RAW CSV 사용
+
+        output_dir:
+            processed CSV를 저장할 폴더. 지정하지 않으면 기본 data/processed 폴더 사용
+
+    Returns:
+        이번 Transform 단계에서 생성된 processed CSV 파일 경로
+
+    Raises:
+        FileNotFoundError:
+            전처리할 RAW CSV 파일을 찾을 수 없는 경우
+
+        ValueError:
+            입력 데이터 또는 전처리 결과 검증에 실패한 경우
+
+        OSError:
+            processed CSV 저장에 실패한 경우
+    """
+
     if raw_csv_file is None:
         raw_csv_file = find_latest_raw_csv()
 
@@ -569,3 +793,13 @@ def run_transform(
     print(f'Processed csv 저장 완료 : {saved_file}')
 
     return saved_file
+
+if __name__ == '__main__':
+    try:
+        run_transform()
+
+    except (FileNotFoundError, OSError, ValueError) as error:
+        print('정적 웹페이지 전처리 작업에 실패했습니다.')
+        print(f'오류 내용 : {error}')
+
+        raise SystemExit(1) from error
