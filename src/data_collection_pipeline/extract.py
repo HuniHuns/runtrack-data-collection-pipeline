@@ -35,17 +35,16 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
 )
 
+from .config import (
+    CONNECT_TIMEOUT,
+    LOAD_MORE_SELECTOR,
+    RACE_LINK_SELECTOR,
+    RAW_DIR,
+    READ_TIMEOUT,
+    TARGET_URL,
+    WAIT_TIMEOUT,
+)
 
-TARGET_URL = 'https://runfor.kr/'
-
-WAIT_TIMEOUT = 10
-
-PROJECT_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_DIR / 'data'
-RAW_DIR = DATA_DIR / 'raw'
-
-RACE_LINK_SELECTOR = ".race-cards a[href^='/race/']"
-LOAD_MORE_SELECTOR = "button.race-load-more"
 
 DETAIL_FIELD_MAP = {
     '일정': 'race_date',
@@ -238,7 +237,7 @@ def collect_race_detail(url):
             상세 페이지 HTTP 요청에 실패한 경우
     """
 
-    response = requests.get(url, timeout=(10, 30))
+    response = requests.get(url, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     response.raise_for_status()
 
     soup = BeautifulSoup(response.content, features='html.parser')
@@ -455,7 +454,7 @@ if __name__ == '__main__':
     try:
         run_extract()
 
-    except (TimeoutException, RequestException, OSError, ValueError) as error:
+    except (TimeoutException, OSError, ValueError) as error:
         print('웹페이지 동적 크롤링 작업에 실패했습니다.')
         print(f'오류 내용 : {error}')
 

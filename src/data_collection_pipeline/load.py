@@ -27,22 +27,21 @@ create_date와 update_date 컬럼을 포함합니다.
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import os
 
 import pandas as pd
-from dotenv import load_dotenv
-
-from sqlalchemy import URL, create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
 
+from .config import (
+    PROCESSED_CSV_PATTERN,
+    PROCESSED_DIR,
+)
+from .database import (
+    create_mysql_engine,
+    load_database_config,
+    test_mysql_connection,
+)
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
-PROCESSED_DIR = PROJECT_DIR / 'data' / 'processed'
-
-ENV_PATH = PROJECT_DIR / '.env'
-
-PROCESSED_CSV_PATTERN = 'marathon_schedule_processed_*.csv'
 
 REQUIRED_INPUT_COLUMNS = {
     'title',
@@ -376,132 +375,6 @@ def load_processed_csv(
             'registration_end_date',
         ],
     )
-
-
-def load_database_config(
-    env_path: Path = ENV_PATH,
-) -> dict[str, str | int]:
-    """
-    .env 파일에서 MySQL 연결 정보를 읽고 필수 환경변수를 검증한다.
-
-    Args:
-        env_path:
-            MySQL 연결 정보가 저장된 .env 파일 경로
-
-    Returns:
-        host, port, database, username, password를 담은 연결 설정
-
-    Raises:
-        FileNotFoundError:
-            .env 파일이 존재하지 않는 경우
-
-        ValueError:
-            필수 환경변수가 없거나 DB_PORT가 정수가 아닌 경우
-    """
-
-    if not env_path.is_file():
-        raise FileNotFoundError(f'.env 파일이 없습니다. : {env_path}')
-
-    load_dotenv(dotenv_path=env_path)
-
-    missing_names = REQUIRED_ENV_NAMES - set(os.environ)
-
-    if missing_names:
-        raise ValueError(f'필수 환경 변수가 없습니다. : {sorted(missing_names)}')
-
-    try:
-        port = int(os.environ['DB_PORT'])
-
-    except ValueError as error:
-        raise ValueError('DB_PORT는 정수여야 합니다.') from error
-
-    return {
-        'host': os.environ['DB_HOST'],
-        'port': port,
-        'database': os.environ['DB_NAME'],
-        'username': os.environ['DB_USER'],
-        'password': os.environ['DB_PASSWORD'],
-    }
-
-
-def create_mysql_engine(
-    config: dict[str, str | int],
-) -> Engine:
-    """
-    MySQL 연결 설정으로 PyMySQL 기반 SQLAlchemy Engine을 생성한다.
-
-    Args:
-        config:
-            load_database_config()가 반환한 MySQL 연결 설정
-
-    Returns:
-        연결 유효성 확인과 재사용 설정이 적용된 SQLAlchemy Engine
-    """
-
-    database_url = URL.create(
-        drivername='mysql+pymysql',
-        username=config['username'],
-        password=config['password'],
-        host=config['host'],
-        port=config['port'],
-        database=config['database'],
-        query={
-            'charset': 'utf8mb4'
-        },
-    )
-
-    return create_engine(
-        database_url,
-        pool_pre_ping=True,
-        pool_recycle=1800,
-    )
-
-
-def test_mysql_connection(
-    engine: Engine,
-) -> dict[str, str]:
-    """
-    MySQL 연결 상태와 서버 정보를 확인한다.
-
-    Args:
-        engine:
-            연결을 확인할 SQLAlchemy Engine
-
-    Returns:
-        MySQL 버전, 연결 데이터베이스명, 현재 사용자 정보를 담은 딕셔너리
-
-    Raises:
-        SQLAlchemyError:
-            MySQL 연결 또는 확인 쿼리 실행에 실패한 경우
-    """
-
-    query = text(
-        '''
-        SELECT
-            VERSION() AS version,
-            DATABASE() AS database_name,
-            CURRENT_USER() AS db_user
-        '''
-    )
-
-    with engine.connect() as connection:
-        info = (
-            connection
-            .execute(query)
-            .mappings()
-            .one()
-        )
-
-    return {
-        'mysql_version':
-            str(info['version']),
-
-        'database_name':
-            str(info['database_name']),
-
-        'current_user':
-            str(info['db_user']),
-    }
 
 
 def validate_processed_data(
@@ -1161,11 +1034,6 @@ def run_load(
 if __name__ == '__main__':
     try:
         run_load()
-
-    except SQLAlchemyError as error:
-        print('MySQL 처리 중 오류가 발생했습니다.')
-        print(f'오류 내용 : {error}')
-        raise SystemExit(1) from error
 
     except (FileNotFoundError, OSError, ValueError) as error:
         print('파일 처리 또는 데이터 검증에 실패했습니다.')

@@ -21,13 +21,12 @@ import re
 
 import pandas as pd
 
+from .config import (
+    PROCESSED_DIR,
+    RAW_CSV_PATTERN,
+    RAW_DIR,
+)
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_DIR / 'data'
-RAW_DIR = DATA_DIR / 'raw'
-PROCESSED_DIR = DATA_DIR / 'processed'
-
-RAW_CSV_PATTERN = 'marathon_schedule_raw_*.csv'
 
 REQUIRED_INPUT_COLUMNS = {
     'title',
