@@ -6,12 +6,19 @@
 대회 목록은 Selenium으로 동적 요소를 로드하고, 각 대회의 상세 페이지는 `requests`와 `BeautifulSoup`으로 수집합니다.  
 수집된 원본 데이터는 CSV로 보관하고, 지역·날짜·접수기간·집결시간·연락처 등을 표준화한 뒤 RUNTRACK 서비스에서 사용할 수 있는 형태로 MySQL에 적재합니다.
 
+또한 `pytest`, `Ruff`, GitHub Actions를 이용하여 코드 품질과 테스트를 자동으로 검증하는 CI 환경을 구성합니다.
+
 ---
 
 ## 1. 프로젝트 구조
 
 ```text
 runtrack-data-collection-pipeline/
+│
+├─ .github/
+│  └─ workflows/
+│     └─ ci.yml
+│
 ├─ data/
 │  ├─ raw/
 │  │  ├─ marathon_schedule_raw_YYMMDD_HHMMSS.csv
@@ -28,9 +35,18 @@ runtrack-data-collection-pipeline/
 │     ├─ transform.py
 │     └─ load.py
 │
+├─ tests/
+│  ├─ test_extract.py
+│  └─ test_transform.py
+│
 ├─ .env
+├─ .env.example
+├─ .gitignore
 ├─ main.py
-└─ README.md
+├─ pyproject.toml
+├─ README.md
+├─ requirements.txt
+└─ requirements-dev.txt
 ```
 
 현재 파이프라인은 별도의 `interim` 단계 없이 **원본 CSV → 전처리 완료 CSV → MySQL** 흐름으로 구성됩니다.
@@ -175,6 +191,69 @@ load_summary = run_load(
 | `run_extract()` | headless 설정, 선택적 출력 디렉터리 | RAW CSV `Path` |
 | `run_transform()` | RAW CSV `Path` | Processed CSV `Path` |
 | `run_load()` | Processed CSV `Path` | MySQL 적재 결과 `dict` |
+
+---
+
+### `config.py`
+
+프로젝트에서 공통으로 사용하는 설정을 관리합니다.
+
+주요 설정:
+
+```text
+PROJECT_DIR
+DATA_DIR
+RAW_DIR
+PROCESSED_DIR
+ENV_FILE
+
+TARGET_URL
+
+WAIT_TIMEOUT
+CONNECT_TIMEOUT
+READ_TIMEOUT
+RACE_LINK_SELECTOR
+LOAD_MORE_SELECTOR
+
+RAW_CSV_PATTERN
+PROCESSED_CSV_PATTERN
+
+APP_TIMEZONE
+```
+
+현재 `APP_TIMEZONE`은 다음과 같이 정의되어 있습니다.
+
+```text
+Asia/Seoul
+```
+
+각 단계 모듈은 필요한 설정만 `config.py`에서 import하여 사용합니다.
+
+---
+
+### `database.py`
+
+MySQL 연결 설정과 SQLAlchemy Engine 생성을 담당합니다.
+
+주요 함수:
+
+```text
+load_database_config()
+create_mysql_engine()
+test_mysql_connection()
+```
+
+DB 연결 정보는 로컬 `.env`에서 읽습니다.
+
+```text
+DB_HOST
+DB_PORT
+DB_NAME
+DB_USER
+DB_PASSWORD
+```
+
+데이터 적재 로직과 데이터베이스 연결 책임을 분리하여 관리합니다.
 
 ---
 
@@ -625,27 +704,47 @@ data/raw/
 
 ## 8. 실행 환경 설정
 
-### 필수 Python 패키지
+### 실행 패키지 설치
 
-프로젝트에서 사용하는 주요 라이브러리는 다음과 같습니다.
+프로젝트 실행에 필요한 패키지를 설치합니다.
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+현재 주요 실행 의존성:
 
 ```text
-pandas
 requests
+pandas
 beautifulsoup4
-selenium
 python-dotenv
 SQLAlchemy
 PyMySQL
 ```
 
-설치 예:
+---
+
+### 개발 및 CI 패키지 설치
+
+테스트와 코드 품질 검사를 포함한 개발 환경은 다음 명령으로 구성합니다.
 
 ```bash
-pip install pandas requests beautifulsoup4 selenium python-dotenv SQLAlchemy PyMySQL
+python -m pip install -r requirements-dev.txt
 ```
 
-Selenium으로 Chrome을 실행하므로 로컬 환경에 Chrome이 설치되어 있어야 합니다.
+`requirements-dev.txt`:
+
+```text
+-r requirements.txt
+
+pytest
+ruff
+```
+
+따라서 실행 패키지와 함께 `pytest`, `Ruff`가 설치됩니다.
+
+---
 
 ### MySQL 환경 변수
 
@@ -724,173 +823,177 @@ load_summary = run_load(
 
 ---
 
-## 10. 단계별 개별 실행
+## 10. 테스트
 
-전체 파이프라인뿐 아니라 각 단계를 개별적으로 실행할 수도 있습니다.
-
-### Extract만 실행
-
-```python
-from src.data_collection_pipeline import run_extract
-
-raw_csv_file = run_extract()
-print(raw_csv_file)
-```
-
-### Transform만 실행
-
-파일 경로를 직접 전달하는 경우:
-
-```python
-from pathlib import Path
-
-from src.data_collection_pipeline import run_transform
-
-
-processed_csv_file = run_transform(
-    Path('data/raw/marathon_schedule_raw_260831_113015.csv')
-)
-
-print(processed_csv_file)
-```
-
-파일 경로를 생략하면 `data/raw/`의 최신 RAW CSV를 사용합니다.
-
-```python
-from src.data_collection_pipeline import run_transform
-
-processed_csv_file = run_transform()
-print(processed_csv_file)
-```
-
-### Load만 실행
-
-```python
-from pathlib import Path
-
-from src.data_collection_pipeline import run_load
-
-
-load_summary = run_load(
-    Path(
-        'data/processed/'
-        'marathon_schedule_processed_260831_113120.csv'
-    )
-)
-
-print(load_summary)
-```
-
-파일 경로를 생략하면 `data/processed/`의 최신 Processed CSV를 사용합니다.
-
----
-
-## 11. 실행 결과 검증
-
-### RAW CSV 확인
+테스트 코드는 `tests/`에 위치합니다.
 
 ```text
-data/raw/marathon_schedule_raw_*.csv
+tests/
+├─ test_extract.py
+└─ test_transform.py
 ```
 
-RAW CSV에는 다음 12개 컬럼이 존재해야 합니다.
+현재 테스트 대상은 외부 네트워크나 MySQL에 직접 의존하지 않는 함수 중심으로 구성합니다.
+
+주요 테스트 대상:
 
 ```text
-title
-race_status
-region
-location
-course
-race_date
-registration_period
-assembly_time
-organizer
-official_url
-phone
-email
+build_raw_file_path()
+save_raw_csv()
+verify_saved_raw_csv()
+parse_date()
+split_registration_period()
+parse_assembly_time()
+preprocessing_marathon_schedule()
+validate_processed_marathon()
+build_processed_file_path()
 ```
 
-### Processed CSV 확인
+전체 테스트 실행:
 
-```text
-data/processed/marathon_schedule_processed_*.csv
+```bash
+python -m pytest -v
 ```
 
-Processed CSV에는 다음 13개 컬럼이 존재해야 합니다.
+`pyproject.toml`에서 pytest 테스트 경로를 지정합니다.
 
-```text
-title
-race_status
-region
-location
-course
-race_date
-registration_start_date
-registration_end_date
-assembly_time
-organizer
-official_url
-phone
-email
-```
-
-### MySQL 테이블 확인
-
-```sql
-SHOW TABLES;
-```
-
-다음 테이블이 존재하는지 확인합니다.
-
-```text
-marathon_schedule
-course
-schedule_course
-```
-
-Audit 컬럼 확인:
-
-```sql
-SHOW COLUMNS FROM marathon_schedule;
-SHOW COLUMNS FROM course;
-SHOW COLUMNS FROM schedule_course;
-```
-
-데이터 적재 건수 확인:
-
-```sql
-SELECT COUNT(*) AS schedule_count
-FROM marathon_schedule;
-
-SELECT COUNT(*) AS course_count
-FROM course;
-
-SELECT COUNT(*) AS relation_count
-FROM schedule_course;
-```
-
-일정과 코스 관계 확인:
-
-```sql
-SELECT
-    ms.schedule_id,
-    ms.title,
-    ms.event_date,
-    c.course_name
-FROM marathon_schedule AS ms
-JOIN schedule_course AS sc
-    ON ms.schedule_id = sc.schedule_id
-JOIN course AS c
-    ON sc.course_id = c.course_id
-ORDER BY
-    ms.event_date,
-    ms.schedule_id,
-    c.course_id;
+```toml
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 ```
 
 ---
 
-## 12. 프로젝트 설계 원칙
+## 11. Ruff 코드 품질 검사
+
+Ruff를 이용하여 Python 코드의 기본 오류와 코드 스타일을 검사합니다.
+
+실행:
+
+```bash
+python -m ruff check .
+```
+
+현재 `pyproject.toml`에서 다음 규칙을 적용합니다.
+
+```text
+E4
+E7
+E9
+F
+I
+DTZ
+RUF
+```
+
+주요 검사 항목:
+
+```text
+Python 기본 문법 및 스타일
+미사용 또는 잘못된 코드
+import 정렬
+datetime timezone 사용
+Ruff 권장 코드 품질 규칙
+```
+
+Python 기준 버전:
+
+```text
+Python 3.13
+```
+
+한 줄 길이 기준:
+
+```text
+100
+```
+
+---
+
+## 12. GitHub Actions CI
+
+CI workflow는 다음 위치에 있습니다.
+
+```text
+.github/workflows/ci.yml
+```
+
+CI 실행 조건:
+
+```text
+main branch push
+또는
+main branch 대상 pull_request
+```
+
+실행 흐름:
+
+```text
+GitHub Push / Pull Request
+        ↓
+Checkout Repository
+        ↓
+Python 3.13 설정
+        ↓
+requirements-dev.txt 설치
+        ↓
+Ruff 검사
+        ↓
+pytest 실행
+        ↓
+CI 성공 / 실패
+```
+
+CI에서는 다음 두 명령을 자동으로 수행합니다.
+
+```bash
+python -m ruff check .
+python -m pytest -v
+```
+
+따라서 로컬과 GitHub Actions에서 동일한 검사 명령을 사용할 수 있습니다.
+
+---
+
+## 13. Git 관리 정책
+
+이 프로젝트는 블랙리스트 방식의 `.gitignore`를 사용합니다.
+
+프로젝트 파일은 기본적으로 Git에서 추적하고,  
+로컬 환경·비밀정보·실행 산출물·캐시 등을 제외합니다.
+
+주요 제외 대상:
+
+```text
+.env
+data/
+logs/
+*.log
+docs/
+notebooks/
+
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+.venv/
+venv/
+
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+build/
+dist/
+.aws-sam/
+```
+
+`.env.example`은 실제 비밀번호가 포함되지 않은 환경설정 예제이므로 Git에서 추적합니다.
+
+---
+
+## 14. 프로젝트 설계 원칙
 
 이 프로젝트는 다음 원칙을 기준으로 구성합니다.
 
@@ -909,7 +1012,7 @@ ORDER BY
 
 ---
 
-## 13. 전체 파이프라인 요약
+## 15. 전체 파이프라인 요약
 
 ```text
 [Extract]

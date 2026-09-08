@@ -15,18 +15,18 @@ Extract 단계에서 생성된 RAW CSV를 읽어 문자열과 결측 표현을 �
         생성된 processed CSV 파일 경로
 """
 
-from pathlib import Path
-from datetime import datetime
 import re
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 
 from .config import (
+    APP_TIMEZONE,
     PROCESSED_DIR,
     RAW_CSV_PATTERN,
     RAW_DIR,
 )
-
 
 REQUIRED_INPUT_COLUMNS = {
     'title',
@@ -264,7 +264,7 @@ def split_registration_period(
     """
     접수기간 문자열을 접수 시작일과 종료일로 분리한다.
 
-    물결표(~, ～)를 기준으로 최대 한 번 분리한 뒤 각 값을 parse_date()로 변환한다.
+    물결표(~)를 기준으로 최대 한 번 분리한 뒤 각 값을 parse_date()로 변환한다.
 
     Args:
         value:
@@ -279,7 +279,7 @@ def split_registration_period(
         return pd.NaT, pd.NaT
 
     periods = re.split(
-        r'\s*[~～]\s*',
+        r'\s*[~]\s*',
         str(value).strip(),
         maxsplit=1,
     )
@@ -642,7 +642,7 @@ def build_processed_file_path(
         marathon_schedule_processed_YYMMDD_HHMMSS.csv 형식의 파일 경로
     """
 
-    timestamp = datetime.now().strftime('%y%m%d_%H%M%S')
+    timestamp = datetime.now(APP_TIMEZONE).strftime('%y%m%d_%H%M%S')
 
     file_name = (f'marathon_schedule_processed_{timestamp}.csv')
 

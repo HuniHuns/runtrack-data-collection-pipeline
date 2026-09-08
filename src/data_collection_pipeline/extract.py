@@ -17,25 +17,25 @@ Selenium을 사용하여 동적 목록을 로딩하고 더보기 버튼을 처�
         생성된 RAW CSV 파일 경로
 """
 
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
-    TimeoutException,
     NoSuchElementException,
     StaleElementReferenceException,
+    TimeoutException,
 )
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 from .config import (
+    APP_TIMEZONE,
     CONNECT_TIMEOUT,
     LOAD_MORE_SELECTOR,
     RACE_LINK_SELECTOR,
@@ -44,7 +44,6 @@ from .config import (
     TARGET_URL,
     WAIT_TIMEOUT,
 )
-
 
 DETAIL_FIELD_MAP = {
     '일정': 'race_date',
@@ -211,7 +210,7 @@ def collect_marathon_url(driver):
 
     race_cards = driver.find_elements(By.CSS_SELECTOR, '.race-card')
 
-    race_list = list()
+    race_list = []
 
     for race in race_cards:
         element = parse_race_element(race)
@@ -306,7 +305,7 @@ def crawl_marathon_schedule(headless: bool = True) -> pd.DataFrame:
     finally:
         driver.quit()
 
-    details = list()
+    details = []
 
     for race in races:
         url = race['detail_url']
@@ -333,7 +332,7 @@ def build_raw_file_path(directory: Path = RAW_DIR) -> Path:
         marathon_schedule_raw_YYMMDD_HHMMSS.csv 형식의 파일 경로
     """
 
-    timestamp = datetime.now().strftime('%y%m%d_%H%M%S')
+    timestamp = datetime.now(APP_TIMEZONE).strftime('%y%m%d_%H%M%S')
     return directory / f'marathon_schedule_raw_{timestamp}.csv'
 
 

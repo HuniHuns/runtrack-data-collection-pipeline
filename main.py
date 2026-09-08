@@ -44,8 +44,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.data_collection_pipeline import (
     run_extract,
-    run_transform,
     run_load,
+    run_transform,
 )
 
 ## --------------------------------------

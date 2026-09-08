@@ -15,7 +15,6 @@ from sqlalchemy.engine import Engine
 
 from .config import ENV_FILE
 
-
 REQUIRED_ENV_NAMES = {
     'DB_HOST',
     'DB_PORT',

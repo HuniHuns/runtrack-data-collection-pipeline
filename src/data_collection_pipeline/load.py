@@ -24,7 +24,7 @@ create_date와 update_date 컬럼을 포함합니다.
         입력 파일명, DB명, 입력 건수, 신규/수정/관계 저장 건수 요약
 """
 
-from datetime import datetime
+from datetime import time
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,6 @@ from .database import (
     load_database_config,
     test_mysql_connection,
 )
-
 
 REQUIRED_INPUT_COLUMNS = {
     'title',
@@ -567,10 +566,7 @@ def to_database_time(
     if pd.isna(value):
         return None
 
-    return datetime.strptime(
-        str(value),
-        '%H:%M'
-    ).time()
+    return time.fromisoformat(str(value))
 
 
 def get_or_create_course(

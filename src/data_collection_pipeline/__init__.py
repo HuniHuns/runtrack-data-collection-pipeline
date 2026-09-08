@@ -1,9 +1,9 @@
 from .extract import run_extract
-from .transform import run_transform
 from .load import run_load
+from .transform import run_transform
 
 __all__ = [
     'run_extract',
-    'run_transform',
     'run_load',
+    'run_transform',
 ]

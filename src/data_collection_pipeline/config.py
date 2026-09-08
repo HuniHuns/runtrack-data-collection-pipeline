@@ -6,7 +6,7 @@ RUNTRACK 마라톤 일정 데이터 수집 파이프라인의 공통 설정 모�
 """
 
 from pathlib import Path
-
+from zoneinfo import ZoneInfo
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -27,3 +27,5 @@ LOAD_MORE_SELECTOR = 'button.race-load-more'
 
 RAW_CSV_PATTERN = 'marathon_schedule_raw_*.csv'
 PROCESSED_CSV_PATTERN = 'marathon_schedule_processed_*.csv'
+
+APP_TIMEZONE = ZoneInfo('Asia/Seoul')
