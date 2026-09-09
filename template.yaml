@@ -14,6 +14,22 @@ Description: >
 Resources:
 
   # ==========================================================
+  # Data Pipeline S3 Bucket
+  # ==========================================================
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+
+    Properties:
+
+      # 외부 Public 접근 차단
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  # ==========================================================
   # Extract Lambda
   # ==========================================================
 
@@ -53,6 +69,13 @@ Resources:
 
           CHROMEDRIVER_PATH: /usr/local/bin/chromedriver
 
+          DATA_BUCKET_NAME: !Ref DataBucket
+
+      Policies:
+
+        - S3WritePolicy:
+            BucketName: !Ref DataBucket
+
     Metadata:
 
       Dockerfile: Dockerfile.extract
@@ -75,3 +98,7 @@ Outputs:
   ExtractFunctionArn:
     Description: RUNTRACK Extract Lambda Function ARN
     Value: !GetAtt ExtractFunction.Arn
+
+  DataBucketName:
+    Description: RUNTRACK Data Pipeline S3 Bucket Name
+    Value: !Ref DataBucket

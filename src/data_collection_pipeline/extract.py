@@ -115,6 +115,8 @@ def create_driver(headless: bool = True) -> webdriver.Chrome:
     # ========================================================
 
     if (CHROMIUM_BINARY and CHROMEDRIVER_PATH):
+        options.add_argument('--no-zygote')
+        
         options.binary_location = CHROMIUM_BINARY
 
         service = Service(executable_path=CHROMEDRIVER_PATH)
