@@ -103,3 +103,163 @@ def upload_raw_csv(
     ## =======================================================
 
     return object_key
+
+
+def download_raw_csv(
+    bucket_name: str,
+    batch_id: str,
+    raw_prefix: str,
+    destination_dir: Path,
+    s3_client: Any | None = None,
+) -> Path:
+    """
+    Transform 단계에서 처리할 RAW CSV를
+    S3 Raw 영역에서 Lambda 임시 디렉터리로 다운로드합니다.
+    """
+
+    ## -------------------------------------------------------
+    ## 1. 필수 입력값 검증
+    ## -------------------------------------------------------
+
+    if not bucket_name:
+        raise ValueError('S3 Bucket 이름이 지정되지 않았습니다.')
+
+    if not batch_id:
+        raise ValueError('batch_id가 지정되지 않았습니다.')
+
+    if not raw_prefix:
+        raise ValueError('raw_prefix가 지정되지 않았습니다.')
+
+    ## -------------------------------------------------------
+    ## 2. S3 Client
+    ## -------------------------------------------------------
+
+    if s3_client is None:
+        import boto3
+
+        s3_client = boto3.client('s3')
+
+    ## -------------------------------------------------------
+    ## 3. Lambda RAW Batch Directory 생성
+    ## -------------------------------------------------------
+
+    raw_batch_dir = destination_dir / batch_id
+    raw_batch_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    ## -------------------------------------------------------
+    ## 4. event로 전달받은 Prefix 아래 Object 조회
+    ## -------------------------------------------------------
+
+    response = s3_client.list_objects_v2(
+        Bucket=bucket_name,
+        Prefix=raw_prefix,
+    )
+
+    objects = response.get('Contents', [])
+
+    ## -------------------------------------------------------
+    ## 5. CSV만 필터링
+    ## -------------------------------------------------------
+
+    csv_objects = [
+        obj
+        for obj in objects
+        if obj['Key'].endswith('.csv')
+    ]
+
+    if not csv_objects:
+        raise FileNotFoundError(
+            'S3 Raw 영역에 CSV 파일이 없습니다. '
+            f's3://{bucket_name}/{raw_prefix}'
+        )
+
+    ## -------------------------------------------------------
+    ## 6. RUNTRACK은 Batch당 RAW CSV 1개만 허용
+    ## -------------------------------------------------------
+
+    if len(csv_objects) > 1:
+        raise ValueError(
+            '하나의 RAW 배치에 CSV 파일이 '
+            '2개 이상 존재합니다. '
+            f's3://{bucket_name}/{raw_prefix}'
+        )
+
+    ## -------------------------------------------------------
+    ## 7. RAW CSV 다운로드
+    ## -------------------------------------------------------
+
+    object_key = csv_objects[0]['Key']
+
+    file_name = Path(object_key).name
+
+    local_file = raw_batch_dir / file_name
+
+    s3_client.download_file(
+        bucket_name,
+        object_key,
+        str(local_file),
+    )
+
+    print(
+        f'S3 다운로드 완료 : '
+        f's3://{bucket_name}/{object_key}'
+    )
+
+    return local_file
+
+
+def upload_processed_file(
+    processed_file: Path,
+    bucket_name: str,
+    batch_id: str,
+    s3_client: Any | None = None,
+) -> str:
+    """
+    Transform 결과 Processed CSV를
+    S3 Processed 영역에 업로드합니다.
+    """
+
+    ## -------------------------------------------------------
+    ## 1. 입력값 검증
+    ## -------------------------------------------------------
+
+    if not bucket_name:
+        raise ValueError('S3 Bucket 이름이 지정되지 않았습니다.')
+
+    if not processed_file.is_file():
+        raise FileNotFoundError(f'Processed CSV 파일이 존재하지 않습니다. {processed_file}')
+
+    ## -------------------------------------------------------
+    ## 2. S3 Client
+    ## -------------------------------------------------------
+
+    if s3_client is None:
+        import boto3
+
+        s3_client = boto3.client('s3')
+
+    ## -------------------------------------------------------
+    ## 3. S3 Object Key
+    ## -------------------------------------------------------
+
+    object_key = f'processed/{batch_id}/{processed_file.name}'
+
+    ## -------------------------------------------------------
+    ## 4. S3 업로드
+    ## -------------------------------------------------------
+
+    s3_client.upload_file(
+        str(processed_file),
+        bucket_name,
+        object_key,
+    )
+
+    print(
+        f'S3 업로드 완료 : '
+        f's3://{bucket_name}/{object_key}'
+    )
+
+    return object_key

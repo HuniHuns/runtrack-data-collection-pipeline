@@ -1,0 +1,5 @@
+{
+  "batch_id": "<actual-batch-id>",
+  "bucket": "<actual-data-bucket-name>",
+  "raw_prefix": "raw/<actual-batch-id>/"
+}

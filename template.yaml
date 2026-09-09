@@ -84,6 +84,55 @@ Resources:
 
       DockerTag: extract-v1
 
+  # ==========================================================
+  # Transform Lambda
+  # ==========================================================
+
+  TransformFunction:
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName:
+        runtrack-pipeline-transform
+
+      CodeUri:
+        .
+
+      Handler:
+        handlers.transform_handler.lambda_handler
+
+      Runtime:
+        python3.13
+
+      Architectures:
+        - x86_64
+
+      Description: >
+        S3 Raw 마라톤 일정 CSV를 전처리하여
+        Processed CSV를 생성하는 Transform Lambda
+
+      MemorySize:
+        512
+
+      Timeout:
+        60
+
+      Environment:
+        Variables:
+
+          DATA_DIR:
+            /tmp/data
+
+      Policies:
+
+        - S3ReadPolicy:
+            BucketName:
+              !Ref DataBucket
+
+        - S3WritePolicy:
+            BucketName:
+              !Ref DataBucket
 
 # ============================================================
 # Outputs
