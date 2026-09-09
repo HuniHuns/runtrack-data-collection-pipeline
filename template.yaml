@@ -6,6 +6,38 @@ Description: >
   RUNTRACK Marathon 대회 데이터 수집 파이프라인을 위한
   AWS SAM 템플릿
 
+## ===========================================================
+## Parameters
+## 계정 및 환경마다 달라지는 AWS 리소스 값을 외부에서 전달
+## ===========================================================
+
+Parameters:
+
+  DbHost:
+    Type: String
+    Description: Amazon RDS MySQL Endpoint
+
+  DbPort:
+    Type: String
+    Default: '3306'
+    Description: Amazon RDS MySQL Port
+
+  DbName:
+    Type: String
+    Description: Amazon RDS MySQL Database Name
+
+  DbSecretArn:
+    Type: String
+    Description: Amazon RDS Managed Secrets Manager Secret ARN
+
+  LoadSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: VPC Subnet ID for RUNTRACK Load Lambda
+
+  LoadSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group ID for RUNTRACK Load Lambda
+
 
 # ============================================================
 # AWS Resources
@@ -134,6 +166,106 @@ Resources:
             BucketName:
               !Ref DataBucket
 
+  LoadFunction:
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName:
+        runtrack-pipeline-load
+
+      CodeUri:
+        .
+
+      Handler:
+        handlers.load_handler.lambda_handler
+
+      Runtime:
+        python3.13
+
+      Architectures:
+        - x86_64
+
+      Description: >
+        S3 Processed 마라톤 일정 CSV를 다운로드하여
+        Amazon RDS MySQL에 적재하는 Load Lambda
+
+      MemorySize:
+        512
+
+      Timeout:
+        120
+
+      Environment:
+        Variables:
+
+          # Lambda 파일시스템은 /tmp 사용
+          DATA_DIR:
+            /tmp/data
+
+          # RDS Endpoint
+          DB_HOST:
+            !Ref DbHost
+
+          # RDS MySQL Port
+          DB_PORT:
+            !Ref DbPort
+
+          # MySQL Database
+          DB_NAME:
+            !Ref DbName
+
+          # RDS 관리형 Secrets Manager ARN
+          DB_SECRET_ARN:
+            !Ref DbSecretArn
+
+      # ------------------------------------------------------
+      # Load Lambda를 기존 RDS와 동일 VPC에 연결
+      # ------------------------------------------------------
+
+      VpcConfig:
+
+        SecurityGroupIds:
+          - !Ref LoadSecurityGroupId
+
+        SubnetIds:
+          - !Ref LoadSubnetId
+
+      Policies:
+
+        # ----------------------------------------------------
+        # Lambda가 VPC ENI를 생성/관리할 수 있도록 권한 부여
+        # ----------------------------------------------------
+
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+        # ----------------------------------------------------
+        # S3 Processed CSV 다운로드
+        # ----------------------------------------------------
+
+        - S3ReadPolicy:
+            BucketName:
+              !Ref DataBucket
+
+        # ----------------------------------------------------
+        # Secrets Manager DB 자격 증명 조회
+        # ----------------------------------------------------
+
+        - Statement:
+
+            - Sid:
+                ReadDatabaseSecret
+
+              Effect:
+                Allow
+
+              Action:
+                - secretsmanager:GetSecretValue
+
+              Resource:
+                - !Ref DbSecretArn
+
+
 # ============================================================
 # Outputs
 # ============================================================
@@ -151,3 +283,11 @@ Outputs:
   DataBucketName:
     Description: RUNTRACK Data Pipeline S3 Bucket Name
     Value: !Ref DataBucket
+  
+  LoadFunctionName:
+    Description: RUNTRACK Load Lambda Function Name
+    Value: !Ref LoadFunction
+
+  LoadFunctionArn:
+    Description: RUNTRACK Load Lambda Function ARN
+    Value: !GetAtt LoadFunction.Arn

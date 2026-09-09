@@ -1,0 +1,5 @@
+{
+  "batch_id": "<actual-batch-id>",
+  "bucket": "<actual-data-bucket-name>",
+  "processed_key": "processed/<actual-batch-id>/marathon_schedule_processed_<actual-batch-id>.csv"
+}

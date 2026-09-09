@@ -263,3 +263,69 @@ def upload_processed_file(
     )
 
     return object_key
+
+
+def download_processed_file(
+    bucket_name: str,
+    processed_key: str,
+    destination_dir: Path,
+    s3_client: Any | None = None,
+) -> Path:
+    """
+    S3 Processed 영역의 단일 CSV를
+    Lambda 임시 저장소로 다운로드합니다.
+
+    Args:
+        bucket_name:
+            S3 Bucket 이름
+
+        processed_key:
+            Transform Lambda가 반환한
+            Processed CSV Object Key
+
+        destination_dir:
+            Lambda 내부 Processed 저장 경로
+
+        s3_client:
+            테스트용 S3 Client
+
+    Returns:
+        다운로드된 로컬 Processed CSV Path
+    """
+
+    if not bucket_name:
+        raise ValueError('S3 Bucket 이름이 지정되지 않았습니다.')
+
+    if not processed_key:
+        raise ValueError('processed_key가 지정되지 않았습니다.')
+
+    if not processed_key.endswith('.csv'):
+        raise ValueError(f'Processed 객체가 CSV 파일이 아닙니다. {processed_key}')
+
+    if s3_client is None:
+        import boto3
+
+        s3_client = boto3.client(
+            's3'
+        )
+
+    destination_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    file_name = Path(processed_key).name
+    local_file = destination_dir / file_name
+
+    s3_client.download_file(
+        bucket_name,
+        processed_key,
+        str(local_file),
+    )
+
+    print(
+        'S3 다운로드 완료 : '
+        f's3://{bucket_name}/{processed_key}'
+    )
+
+    return local_file

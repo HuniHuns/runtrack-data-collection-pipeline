@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from src.data_collection_pipeline.s3_storage import (
+    download_processed_file,
     download_raw_csv,
     upload_processed_file,
     upload_raw_csv,
@@ -305,3 +306,67 @@ def test_upload_processed_file(
         'test-runtrack-bucket',
         expected_key,
     )
+
+
+def test_download_processed_file(tmp_path):
+    """
+    Load 단계를 위해 S3 Processed 영역의 단일 정제 CSV 파일을 로컬 디렉터리로
+    올바르게 다운로드하는지 검증합니다.
+    """
+    ## 1. 테스트용 S3 메타데이터 정의
+    bucket_name = 'test-runtrack-bucket'
+    batch_id = '20260901_035140'
+
+    processed_key = (
+        f'processed/{batch_id}/'
+        f'marathon_schedule_processed_{batch_id}.csv'
+    )
+
+    ## 2. Mock S3 Client 생성
+    mock_s3_client = Mock()
+
+    ## 3. Processed CSV 다운로드 함수 실행
+    downloaded_file = download_processed_file(
+        bucket_name=bucket_name,
+        processed_key=processed_key,
+        destination_dir=tmp_path,
+        s3_client=mock_s3_client,
+    )
+
+    expected_file = (
+        tmp_path
+        / f'marathon_schedule_processed_{batch_id}.csv'
+    )
+
+    ## 4. 반환된 로컬 파일 경로가 목적지 경로와 파일명에 정확히 일치하는지 검증
+    assert downloaded_file == expected_file
+
+    ## 5. 올바른 버킷, Key, 로컬 저장 목적지 문자열로 S3 download_file API가 1회 호출되었는지 검증
+    mock_s3_client.download_file.assert_called_once_with(
+        bucket_name,
+        processed_key,
+        str(expected_file),
+    )
+
+
+def test_download_processed_file_requires_processed_key(
+    tmp_path,
+):
+    """
+    processed_key 파라미터가 비어 있거나 누락된 경우
+    명시적인 ValueError 예외가 발생하는지 방어 로직을 검증합니다.
+    """
+    ## 1. Mock S3 Client 생성
+    mock_s3_client = Mock()
+
+    ## 2. 빈 processed_key 전달 시 적절한 에러 메시지와 함께 ValueError가 발생하는지 검증
+    with pytest.raises(
+        ValueError,
+        match=r'processed_key가 지정되지 않았습니다\.',
+    ):
+        download_processed_file(
+            bucket_name='test-runtrack-bucket',
+            processed_key='',
+            destination_dir=tmp_path,
+            s3_client=mock_s3_client,
+        )
