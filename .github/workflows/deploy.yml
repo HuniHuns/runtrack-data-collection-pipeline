@@ -1,0 +1,158 @@
+name: CD
+
+
+## ===========================================================
+## CD 실행 조건
+## CI Workflow가 main Branch에서 성공한 경우 실행
+## ===========================================================
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+
+    types:
+      - completed
+
+    branches:
+      - main
+
+
+## ===========================================================
+## GitHub Actions 권한
+## ===========================================================
+
+permissions:
+
+  ## GitHub Repository Checkout 권한
+  contents: read
+
+  ## GitHub OIDC Token 발급 권한
+  id-token: write
+
+
+## ===========================================================
+## CD Job
+## ===========================================================
+
+jobs:
+
+  deploy:
+
+    ## CI Workflow가 성공한 경우에만 CD 실행
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+
+      ## -------------------------------------------------------
+      ## 1. GitHub Repository Checkout
+      ## CI에서 검증한 Commit을 동일하게 Checkout
+      ## -------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+        with:
+
+          ## CI에서 검증한 Commit SHA
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+
+      ## -------------------------------------------------------
+      ## 2. Python 설치
+      ## -------------------------------------------------------
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+
+        with:
+          python-version: '3.13'
+
+
+      ## -------------------------------------------------------
+      ## 3. AWS SAM CLI 설치
+      ## -------------------------------------------------------
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v3
+
+        with:
+
+          ## AWS SAM 공식 Installer 사용
+          use-installer: true
+
+          ## GitHub API Rate Limit 완화를 위한 Token
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+
+      ## -------------------------------------------------------
+      ## 4. GitHub OIDC → AWS IAM Role 인증
+      ## -------------------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+
+        with:
+
+          ## GitHub Actions가 Assume할 AWS IAM Role
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+
+          ## AWS Region
+          aws-region: ${{ vars.AWS_REGION }}
+
+          ## CloudTrail 등에서 식별할 Session 이름
+          role-session-name: runtrack-pipeline-github-actions
+
+
+      ## -------------------------------------------------------
+      ## 5. AWS 인증 확인
+      ## -------------------------------------------------------
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      ## -------------------------------------------------------
+      ## 6. SAM Template 검증
+      ## -------------------------------------------------------
+
+      - name: Validate SAM template
+        run: |
+          sam validate
+
+
+      ## -------------------------------------------------------
+      ## 7. SAM Build
+      ## Lambda 코드와 Dependency 빌드
+      ## -------------------------------------------------------
+
+      - name: Build SAM application
+        run: |
+          sam build
+
+
+      ## -------------------------------------------------------
+      ## 8. AWS SAM Deploy
+      ## CloudFormation Stack 자동 업데이트
+      ## -------------------------------------------------------
+
+      - name: Deploy SAM application
+        run: |
+          sam deploy \
+            --stack-name runtrack-pipeline \
+            --region "${{ vars.AWS_REGION }}" \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              DbHost="${{ vars.DB_HOST }}" \
+              DbPort="3306" \
+              DbName="runtrack" \
+              DbSecretArn="${{ vars.DB_SECRET_ARN }}" \
+              LoadSubnetId="${{ vars.LOAD_SUBNET_ID }}" \
+              LoadSecurityGroupId="${{ vars.LOAD_SECURITY_GROUP_ID }}" 
