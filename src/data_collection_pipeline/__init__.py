@@ -1,9 +1,3 @@
-from .extract import run_extract
-from .load import run_load
-from .transform import run_transform
-
-__all__ = [
-    'run_extract',
-    'run_load',
-    'run_transform',
-]
+"""
+동적 웹페이지 데이터 수집 파이프라인 패키지입니다.
+"""

@@ -1,15 +1,80 @@
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 
+from src.data_collection_pipeline import extract
 from src.data_collection_pipeline.config import APP_TIMEZONE
 from src.data_collection_pipeline.extract import (
     build_raw_batch_dir,
     build_raw_file_path,
+    create_driver,
     save_raw_csv,
     verify_saved_raw_csv,
 )
+
+
+def test_create_driver_uses_lambda_chromium(monkeypatch):
+    """
+    Chromium과 ChromeDriver 경로가 설정된 경우
+    Lambda Container용 WebDriver 설정을 사용하는가
+    """
+
+    ## 1. Lambda 환경의 Chromium 경로 Mock
+    monkeypatch.setattr(
+        extract,
+        'CHROMIUM_BINARY',
+        '/usr/local/bin/chromium',
+    )
+
+    monkeypatch.setattr(
+        extract,
+        'CHROMEDRIVER_PATH',
+        '/usr/local/bin/chromedriver',
+    )
+
+    ## 2. 실제 Chrome 실행 방지를 위한 Mock
+    fake_driver = MagicMock()
+    fake_service = MagicMock()
+
+    chrome_mock = MagicMock(return_value=fake_driver)
+    service_mock = MagicMock(return_value=fake_service)
+
+    monkeypatch.setattr(
+        extract.webdriver,
+        'Chrome',
+        chrome_mock,
+    )
+
+    monkeypatch.setattr(
+        extract,
+        'Service',
+        service_mock,
+    )
+
+    ## 3. Driver 생성
+    result = create_driver()
+
+    ## 4. 결과 검증
+    assert result is fake_driver
+
+    service_mock.assert_called_once_with(
+        executable_path=(
+            '/usr/local/bin/chromedriver'
+        )
+    )
+
+    call_kwargs = chrome_mock.call_args.kwargs
+    options = call_kwargs['options']
+
+    assert options.binary_location == '/usr/local/bin/chromium'
+
+    assert '--headless=new' in options.arguments
+    assert '--no-sandbox' in options.arguments
+    assert '--disable-dev-shm-usage' in options.arguments
+
+    assert call_kwargs['service'] is fake_service
 
 
 def test_build_raw_batch_dir(tmp_path):

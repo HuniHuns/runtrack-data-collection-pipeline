@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  RUNTRACK Marathon 대회 데이터 수집 파이프라인을 위한
+  AWS SAM 템플릿
+
+
+# ============================================================
+# AWS Resources
+# ============================================================
+
+Resources:
+
+  # ==========================================================
+  # Extract Lambda
+  # ==========================================================
+
+  ExtractFunction:
+    Type: AWS::Serverless::Function
+
+    Properties:
+
+      FunctionName: runtrack-pipeline-extract
+
+      PackageType: Image
+
+      Architectures:
+        - x86_64
+
+      Description: >
+        runfor.kr에서 마라톤 일정 데이터를 동적으로 수집하고
+        Lambda 임시 저장소에 RAW CSV를 생성하는 Extract Lambda
+
+      MemorySize: 2048
+
+      Timeout: 900
+
+      EphemeralStorage:
+        Size: 1024
+
+      Environment:
+        Variables:
+
+          # Lambda Root FileSystem 대신
+          # 쓰기가 가능한 /tmp 영역 사용
+          DATA_DIR: /tmp/data
+
+          # Docker Image에서 생성한
+          # Chromium / ChromeDriver 고정 실행 경로
+          CHROMIUM_BINARY: /usr/local/bin/chromium
+
+          CHROMEDRIVER_PATH: /usr/local/bin/chromedriver
+
+    Metadata:
+
+      Dockerfile: Dockerfile.extract
+
+      DockerContext: .
+
+      DockerTag: extract-v1
+
+
+# ============================================================
+# Outputs
+# ============================================================
+
+Outputs:
+
+  ExtractFunctionName:
+    Description: RUNTRACK Extract Lambda Function Name
+    Value: !Ref ExtractFunction
+
+  ExtractFunctionArn:
+    Description: RUNTRACK Extract Lambda Function ARN
+    Value: !GetAtt ExtractFunction.Arn

@@ -42,11 +42,9 @@ import requests
 from selenium.common.exceptions import WebDriverException
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.data_collection_pipeline import (
-    run_extract,
-    run_load,
-    run_transform,
-)
+from src.data_collection_pipeline.extract import run_extract
+from src.data_collection_pipeline.load import run_load
+from src.data_collection_pipeline.transform import run_transform
 
 ## --------------------------------------
 ## 프로젝트 경로 설정

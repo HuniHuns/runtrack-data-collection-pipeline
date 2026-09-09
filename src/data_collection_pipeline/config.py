@@ -44,7 +44,7 @@ PROCESSED_CSV_PATTERN = 'marathon_schedule_processed_*.csv'
 ## ===========================================================
 
 # 로컬에서는 설정하지 않아도 기존 Chrome/Selenium Manager 사용 가능
-# Lambda에서는 Chromium Layer의 경로를 환경변수로 전달
+# Lambda Container에서는 설치된 Chromium/ChromeDriver 경로를 환경변수로 전달
 
 CHROMIUM_BINARY = os.getenv('CHROMIUM_BINARY')
 CHROMEDRIVER_PATH = os.getenv('CHROMEDRIVER_PATH')

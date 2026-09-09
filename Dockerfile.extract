@@ -1,0 +1,79 @@
+# ============================================================
+# 1. AWS Lambda Python 3.13 Base Image
+# ============================================================
+
+FROM public.ecr.aws/lambda/python:3.13
+
+
+# ============================================================
+# 2. Amazon Linux 2023 최신 패키지 적용
+#    + SPAL Repository 등록
+#    + Chromium / ChromeDriver 설치
+# ============================================================
+
+RUN dnf upgrade -y \
+    && dnf install -y spal-release \
+    && dnf install -y \
+        chromium \
+        chromedriver \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+
+# ============================================================
+# 3. Chromium / ChromeDriver 실행 경로 표준화
+#
+# 배포 환경의 실제 package path를 탐색한 뒤
+# RUNTRACK에서 사용할 고정 경로로 symbolic link를 생성한다.
+# ============================================================
+
+RUN CHROMIUM_PATH="$(command -v chromium-browser || command -v chromium)" \
+    && CHROMEDRIVER_PATH="$(command -v chromedriver)" \
+    && test -n "${CHROMIUM_PATH}" \
+    && test -n "${CHROMEDRIVER_PATH}" \
+    && ln -sf "${CHROMIUM_PATH}" /usr/local/bin/chromium \
+    && ln -sf "${CHROMEDRIVER_PATH}" /usr/local/bin/chromedriver \
+    && /usr/local/bin/chromium --version \
+    && /usr/local/bin/chromedriver --version
+
+
+# ============================================================
+# 4. Extract Lambda Python Dependencies
+# ============================================================
+
+COPY requirements-extract.txt \
+    ${LAMBDA_TASK_ROOT}/requirements-extract.txt
+
+RUN pip install \
+    --no-cache-dir \
+    --target ${LAMBDA_TASK_ROOT} \
+    -r ${LAMBDA_TASK_ROOT}/requirements-extract.txt
+
+
+# ============================================================
+# 5. RUNTRACK Application Source
+# ============================================================
+
+COPY src \
+    ${LAMBDA_TASK_ROOT}/src
+
+COPY handlers \
+    ${LAMBDA_TASK_ROOT}/handlers
+
+
+# ============================================================
+# 6. Lambda Writable Directory 설정
+#
+# Lambda에서는 /tmp만 일반적인 임시 쓰기 영역으로 사용한다.
+# ============================================================
+
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
+ENV TMPDIR=/tmp
+
+
+# ============================================================
+# 7. Lambda Handler
+# ============================================================
+
+CMD ["handlers.extract_handler.lambda_handler"]
