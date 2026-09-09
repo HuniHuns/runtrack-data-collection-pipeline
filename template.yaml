@@ -266,12 +266,116 @@ Resources:
                 - !Ref DbSecretArn
 
 
+  # ==========================================================
+  # Step Functions 상태 머신
+  # Extract → Transform → Load 순차 실행
+  # ==========================================================
+
+  PipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+
+    Properties:
+
+      Name:
+        runtrack-pipeline-state-machine
+
+      Definition:
+
+        StartAt: Extract
+
+        States:
+
+          # --------------------------------------------------
+          # 1. Extract Lambda
+          # --------------------------------------------------
+
+          Extract:
+            Type: Task
+
+            Resource: arn:aws:states:::lambda:invoke
+
+            Parameters:
+
+              FunctionName: !GetAtt ExtractFunction.Arn
+
+              # 현재 State의 입력 전체를 Lambda Event로 전달
+              Payload.$: $
+
+            # Lambda 응답 중 실제 Payload만 다음 State로 전달
+            OutputPath: $.Payload
+
+            Next: Transform
+
+
+          # --------------------------------------------------
+          # 2. Transform Lambda
+          # --------------------------------------------------
+
+          Transform:
+            Type: Task
+
+            Resource: arn:aws:states:::lambda:invoke
+
+            Parameters:
+
+              FunctionName: !GetAtt TransformFunction.Arn
+
+              Payload.$: $
+
+            OutputPath: $.Payload
+
+            Next: Load
+
+
+          # --------------------------------------------------
+          # 3. Load Lambda
+          # --------------------------------------------------
+
+          Load:
+            Type: Task
+
+            Resource: arn:aws:states:::lambda:invoke
+
+            Parameters:
+
+              FunctionName: !GetAtt LoadFunction.Arn
+
+              Payload.$: $
+
+            OutputPath: $.Payload
+
+            End: true
+
+
+      # ======================================================
+      # Step Functions IAM 권한
+      # ======================================================
+
+      Policies:
+
+        # Extract Lambda 호출
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ExtractFunction
+
+        # Transform Lambda 호출
+        - LambdaInvokePolicy:
+            FunctionName: !Ref TransformFunction
+
+        # Load Lambda 호출
+        - LambdaInvokePolicy:
+            FunctionName: !Ref LoadFunction
+
+
 # ============================================================
 # Outputs
 # ============================================================
 
 Outputs:
 
+  DataBucketName:
+    Description: RUNTRACK Data Pipeline S3 Bucket Name
+    Value: !Ref DataBucket
+  
   ExtractFunctionName:
     Description: RUNTRACK Extract Lambda Function Name
     Value: !Ref ExtractFunction
@@ -280,10 +384,14 @@ Outputs:
     Description: RUNTRACK Extract Lambda Function ARN
     Value: !GetAtt ExtractFunction.Arn
 
-  DataBucketName:
-    Description: RUNTRACK Data Pipeline S3 Bucket Name
-    Value: !Ref DataBucket
-  
+  TransformFunctionName:
+    Description: RUNTRACK Transform Lambda Function Name
+    Value: !Ref TransformFunction
+
+  TransformFunctionArn:
+    Description: RUNTRACK Transform Lambda Function ARN
+    Value: !GetAtt TransformFunction.Arn
+
   LoadFunctionName:
     Description: RUNTRACK Load Lambda Function Name
     Value: !Ref LoadFunction
@@ -291,3 +399,11 @@ Outputs:
   LoadFunctionArn:
     Description: RUNTRACK Load Lambda Function ARN
     Value: !GetAtt LoadFunction.Arn
+
+  PipelineStateMachineName:
+    Description: RUNTRACK Pipeline Step Functions State Machine Name
+    Value: runtrack-pipeline-state-machine
+
+  PipelineStateMachineArn:
+    Description: RUNTRACK Pipeline Step Functions State Machine ARN
+    Value: !Ref PipelineStateMachine
