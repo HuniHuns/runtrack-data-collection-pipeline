@@ -21,12 +21,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import (
-    APP_TIMEZONE,
-    PROCESSED_DIR,
-    RAW_CSV_PATTERN,
-    RAW_DIR,
-)
+from .config import APP_TIMEZONE, PROCESSED_DIR, RAW_CSV_PATTERN, RAW_DIR, SOURCE_SITE
+
+BATCH_DIR_PATTERN_RE = re.compile(r'^\d{6}_\d{6}$')
 
 REQUIRED_INPUT_COLUMNS = {
     'title',
@@ -57,6 +54,9 @@ COLUMN_ORDER = [
     'official_url',
     'phone',
     'email',
+    'source_site',
+    'parsed_at',
+    'processed_at'
 ]
 
 MISSING_VALUES = {
@@ -96,35 +96,103 @@ ALLOWED_REGIONS = {
 PHONE_PATTERN = re.compile(r'\d{0,3}-?\d{3,4}-\d{4}')
 
 
+def parse_batch_directory_name(batch_dir: Path) -> datetime:
+    """
+    raw 배치 폴더명에서 배치 시각을 추출한다.
+
+    Args:
+        batch_dir:
+            YYMMDD_HHMMSS 형식의 raw 배치 폴더 경로
+
+    Returns:
+        배치 폴더명에서 추출한 날짜와 시각
+
+    Raises:
+        ValueError:
+            폴더명이 지정한 형식과 일치하지 않는 경우
+
+    Examples:
+        data/raw/260909_100000
+    """
+
+    if BATCH_DIR_PATTERN_RE.fullmatch(batch_dir.name) is None:
+        raise ValueError(f'raw 배치 폴더명 형식이 올바르지 않습니다. {batch_dir.name}')
+
+    return datetime.strptime(batch_dir.name, '%y%m%d_%H%M%S').replace(tzinfo=APP_TIMEZONE)
+
+
+def find_latest_raw_batch_directory(directory: Path = RAW_DIR) -> Path:
+    """
+    data/raw 폴더에서 가장 최근 배치 폴더를 반환한다.
+
+    Args:
+        directory:
+            raw 배치 폴더들이 저장된 기본 경로
+
+    Returns:
+        가장 최근 raw 배치 폴더 경로
+
+    Raises:
+        FileNotFoundError:
+            raw 폴더가 없거나 유효한 배치 폴더가 없는 경우
+    """
+
+    if not directory.is_dir():
+        raise FileNotFoundError(f'raw 폴더가 없습니다. {directory}')
+
+    batch_directories: list[tuple[datetime, Path]] = []
+
+    for batch_dir in directory.iterdir():
+        if not batch_dir.is_dir():
+            continue
+
+        try:
+            batch_at = parse_batch_directory_name(batch_dir)
+        except ValueError:
+            continue
+
+        batch_directories.append((batch_at, batch_dir))
+
+    if not batch_directories:
+        raise FileNotFoundError('전처리할 raw 배치 폴더가 없습니다.')
+
+    return max(batch_directories, key=lambda item: item[0])[1]
+
+
 def find_latest_raw_csv(
     directory: Path = RAW_DIR,
     pattern: str = RAW_CSV_PATTERN,
 ):
     """
-    data/raw 폴더에서 가장 최근 RAW CSV 파일을 반환한다.
+    가장 최근 RAW 배치 폴더에서 가장 최근 RAW CSV 파일을 반환한다.
 
     Args:
         directory:
-            RAW CSV 파일이 저장된 폴더
+            RAW 배치들이 저장된 폴더
 
         pattern:
             검색할 RAW CSV 파일명 패턴
 
     Returns:
-        파일명 정렬 기준으로 가장 최근 RAW CSV 파일 경로
+        가장 최근 RAW 배치의 CSV 파일 경로
 
     Raises:
         FileNotFoundError:
             RAW 폴더가 없거나 전처리할 RAW CSV 파일이 없는 경우
     """
+
         
     if not directory.exists():
         raise FileNotFoundError(f'RAW 데이터 폴더가 없습니다. {directory}')
 
-    raw_files = sorted(directory.glob(pattern))
+    latest_batch_dir = find_latest_raw_batch_directory(directory)
+    raw_files = sorted(latest_batch_dir.glob(pattern))
 
     if not raw_files:
         raise FileNotFoundError('전처리할 RAW csv 파일이 없습니다.')
+
+    if len(raw_files) > 1:
+        raise ValueError(f'하나의 RAW 배치에 CSV 파일이 2개 이상 존재합니다. {latest_batch_dir}')
 
     return raw_files[-1]
 
@@ -375,6 +443,7 @@ def parse_assembly_time(
 
 def preprocessing_marathon_schedule(
     schedule_df: pd.DataFrame,
+    batch_at: datetime,
 ) -> pd.DataFrame:
     """
     마라톤 일정 RAW DataFrame을 분석 및 DB 저장이 가능한 구조로 전처리한다.
@@ -389,10 +458,14 @@ def preprocessing_marathon_schedule(
         - 집결시간 HH:MM 변환
         - 전화번호와 이메일 형식 검증
         - 최종 컬럼 순서 정리
+        - 전처리 정보 열 추가
 
     Args:
         schedule_df:
             Extract 단계의 RAW 마라톤 일정 DataFrame
+
+        batch_at:
+            RAW 배치 파일에서 추출한 파이프라인 실행 시각
 
     Returns:
         COLUMN_ORDER 순서로 정리된 전처리 DataFrame
@@ -404,6 +477,7 @@ def preprocessing_marathon_schedule(
     
     validate_input_marathon(schedule_df)
 
+    processed_at = pd.Timestamp.now(tz=APP_TIMEZONE).floor('s')
     processed_df = clean_string_columns(schedule_df)
 
     processed_df['region'] = processed_df['region'].replace(REGION_MAP)
@@ -503,6 +577,11 @@ def preprocessing_marathon_schedule(
         ~valid_email,
         'email',
     ] = pd.NA
+
+    ## 데이터 출처와 처리 시각 등의 메타데이터 컬럼 추가
+    processed_df['source_site'] = SOURCE_SITE
+    processed_df['parsed_at'] = pd.Timestamp(batch_at)
+    processed_df['processed_at'] = processed_at
 
     ## 최종 컬럼 순서 정리
     return processed_df[COLUMN_ORDER]
@@ -627,52 +706,41 @@ def validate_processed_marathon(
         ),
     }
 
-
-def build_processed_file_path(
-    directory: Path = PROCESSED_DIR,
-) -> Path:
+def ensure_directory(directory: Path) -> Path:
     """
-    현재 시각을 포함한 processed CSV 파일 경로를 생성한다.
+    지정한 폴더가 없으면 생성하고 폴더 경로를 반환한다.
 
     Args:
         directory:
-            processed CSV를 저장할 기본 폴더
+            생성하거나 확인할 폴더 경로
 
     Returns:
-        marathon_schedule_processed_YYMMDD_HHMMSS.csv 형식의 파일 경로
+        생성 또는 확인이 완료된 폴더 경로
     """
 
-    timestamp = datetime.now(APP_TIMEZONE).strftime('%y%m%d_%H%M%S')
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    file_name = (f'marathon_schedule_processed_{timestamp}.csv')
+    return directory
 
-    return directory / file_name
-
-
-def save_processed_csv(
-    df: pd.DataFrame,
-) -> Path:
+def save_csv_atomically(df: pd.DataFrame, file_path: Path) -> Path:
     """
-    전처리 DataFrame을 하나의 processed CSV 파일로 저장한다.
-
-    임시 파일에 먼저 저장한 뒤 최종 파일로 교체하여
-    저장 도중 실패한 불완전한 파일이 남는 것을 방지한다.
+    DataFrame을 임시 CSV에 저장한 뒤 최종 파일로 교체한다.
 
     Args:
         df:
-            저장할 전처리 DataFrame
+            저장할 DataFrame
+
+        file_path:
+            최종 CSV 파일 경로
 
     Returns:
-        저장이 완료된 processed CSV 파일 경로
-
-    Raises:
-        OSError:
-            폴더 생성 또는 CSV 저장에 실패한 경우
+        저장된 최종 CSV 파일 경로
     """
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
-    file_path = build_processed_file_path()
+    ensure_directory(file_path.parent)
     temp_path = file_path.with_suffix('.tmp.csv')
 
     try:
@@ -680,9 +748,8 @@ def save_processed_csv(
             temp_path,
             index=False,
             encoding='utf-8-sig',
-            date_format='%Y-%m-%d',
+            date_format='%Y-%m-%dT%H:%M:%S%z',
         )
-
         temp_path.replace(file_path)
 
     except Exception:
@@ -691,6 +758,44 @@ def save_processed_csv(
         raise
 
     return file_path
+
+def build_processed_file_path(
+    batch_at: datetime,
+    directory: Path = PROCESSED_DIR,
+) -> Path:
+    """
+    현재 시각을 포함한 processed CSV 파일 경로를 생성한다.
+
+    Args:
+        batch_at:
+            raw 배치 폴더명에서 추출한 배치 시각
+
+        directory:
+            processed CSV를 저장할 기본 폴더
+
+    Returns:
+        marathon_schedule_processed_YYMMDD_HHMMSS.csv 형식의 파일 경로
+    """
+
+    timestamp = batch_at.strftime('%y%m%d_%H%M%S')
+
+    file_name = (f'marathon_schedule_processed_{timestamp}.csv')
+
+    return directory / file_name
+
+
+def save_processed_csv(
+    df: pd.DataFrame,
+    directory: Path,
+    batch_at: datetime,
+) -> Path:
+    """
+    전처리 DataFrame을 하나의 processed CSV 파일로 저장한다.
+    """
+
+    output_file = build_processed_file_path(batch_at, directory)
+
+    return save_csv_atomically(df, output_file)
 
 
 def verify_saved_csv(
@@ -726,8 +831,6 @@ def verify_saved_csv(
     return saved_df
 
 
-
-
 def run_transform(
     raw_csv_file: Path | None = None,
     output_dir: Path | None = None,
@@ -759,33 +862,26 @@ def run_transform(
     if raw_csv_file is None:
         raw_csv_file = find_latest_raw_csv()
 
+    raw_batch_dir = raw_csv_file.parent
+    batch_at = parse_batch_directory_name(raw_batch_dir)
+
     print('=' * 70)
     print('2. Transform - RUNTRACK 마라톤 일정 전처리 시작')
     print('=' * 70)
     print(f'전처리 대상 RAW csv : {raw_csv_file}')
 
     raw_df = load_raw_csv(raw_csv_file)
-    processed_df = preprocessing_marathon_schedule(raw_df)
+    processed_df = preprocessing_marathon_schedule(raw_df, batch_at)
     validation_summary = validate_processed_marathon(processed_df)
 
     target_dir = output_dir if output_dir is not None else PROCESSED_DIR
-    target_dir.mkdir(parents=True, exist_ok=True)
-    saved_file = build_processed_file_path(directory=target_dir)
-    temp_path = saved_file.with_suffix('.tmp.csv')
 
-    try:
-        processed_df.to_csv(
-            temp_path,
-            index=False,
-            encoding='utf-8-sig',
-            date_format='%Y-%m-%d',
-        )
-        temp_path.replace(saved_file)
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
-
+    saved_file = save_processed_csv(
+        df=processed_df,
+        directory=target_dir,
+        batch_at=batch_at
+    )
+    
     verify_saved_csv(saved_file, processed_df)
 
     print(f'전처리 검증 결과 : {validation_summary}')

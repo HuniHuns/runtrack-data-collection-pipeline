@@ -10,7 +10,8 @@ Selenium을 사용하여 동적 목록을 로딩하고 더보기 버튼을 처�
 
 저장 구조:
     data/raw/
-        marathon_schedule_raw_YYMMDD_HHMMSS.csv
+        YYMMDD_HHMMSS/
+            marathon_schedule_raw_YYMMDD_HHMMSS.csv
 
 반환값:
     run_extract()
@@ -30,12 +31,15 @@ from selenium.common.exceptions import (
     TimeoutException,
 )
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from .config import (
     APP_TIMEZONE,
+    CHROMEDRIVER_PATH,
+    CHROMIUM_BINARY,
     CONNECT_TIMEOUT,
     LOAD_MORE_SELECTOR,
     RACE_LINK_SELECTOR,
@@ -70,14 +74,21 @@ RAW_COLUMNS = [
 
 def create_driver(headless: bool = True) -> webdriver.Chrome:
     """
+    로컬 또는 AWS Lambda 환경에서 사용할
     Selenium Chrome WebDriver를 생성한다.
+
+    로컬 환경에서는 Selenium Manager가 설치된
+    Chrome/Driver를 탐색한다.
+    
+    Lambda Container 환경에서는 Container Image에
+    설치된 Chromium과 ChromeDriver 경로를 명시적으로 사용한다.
 
     Args:
         headless:
-            True이면 브라우저 UI를 표시하지 않는 headless 모드로 실행
+            Headless Browser 실행 여부
 
     Returns:
-        설정이 적용된 Selenium Chrome WebDriver
+        초기화된 Chrome WebDriver
     """
     
     options = Options()
@@ -85,7 +96,40 @@ def create_driver(headless: bool = True) -> webdriver.Chrome:
     if headless:
         options.add_argument('--headless=new')
 
-    options.add_argument('--start-maximized')
+    # ========================================================
+    # Lambda에서 필요한 Chrome 실행 옵션
+    # ========================================================
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--window-size=1920,1080')
+
+    # Lambda Container의 Root FileSystem은
+    # 런타임에서 쓰기 제한이 있으므로
+    # Chrome 임시 파일은 /tmp를 사용한다.
+    options.add_argument('--user-data-dir=/tmp/chrome-user-data')
+    options.add_argument('--disk-cache-dir=/tmp/chrome-cache')
+
+    # ========================================================
+    # AWS Lambda Container 실행
+    # ========================================================
+
+    if (CHROMIUM_BINARY and CHROMEDRIVER_PATH):
+        options.binary_location = CHROMIUM_BINARY
+
+        service = Service(executable_path=CHROMEDRIVER_PATH)
+
+        return webdriver.Chrome(
+            service=service,
+            options=options,
+        )
+
+    # ========================================================
+    # 로컬 실행
+    # ========================================================
+
+    if not headless:
+        options.add_argument('--start-maximized')
 
     return webdriver.Chrome(options=options)
 
@@ -320,19 +364,77 @@ def crawl_marathon_schedule(headless: bool = True) -> pd.DataFrame:
     return raw_df
 
 
-def build_raw_file_path(directory: Path = RAW_DIR) -> Path:
+def ensure_directory(directory: Path) -> Path:
     """
-    현재 시각을 포함한 RAW CSV 파일 경로를 생성한다.
+    지정한 폴더가 없으면 생성하고 폴더 경로를 반환한다.
 
     Args:
         directory:
-            RAW CSV를 저장할 기본 폴더
+            생성하거나 확인할 폴더 경로
 
     Returns:
-        marathon_schedule_raw_YYMMDD_HHMMSS.csv 형식의 파일 경로
+        생성 또는 확인이 완료된 폴더 경로
     """
 
-    timestamp = datetime.now(APP_TIMEZONE).strftime('%y%m%d_%H%M%S')
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return directory
+
+
+def build_raw_batch_dir(
+    directory: Path,
+    collected_at: datetime | None = None,
+) -> Path:
+    """
+    수집 시작 시각을 이름으로 사용하는 배치 폴더를 생성한다.
+
+    Args:
+        directory:
+            모든 수집 배치가 저장되는 기본 폴더
+
+        collected_at:
+            전체 수집 작업의 시작 시각
+
+    Returns:
+        생성된 raw csv 배치 디렉터리 경로
+    """
+
+    if collected_at is None:
+        collected_at = datetime.now(APP_TIMEZONE)
+
+    batch_name = collected_at.strftime('%y%m%d_%H%M%S')
+    batch_dir = directory / batch_name
+
+    return ensure_directory(batch_dir)
+
+
+def build_raw_file_path(
+    directory: Path,
+    collected_at: datetime | None = None,
+) -> Path:
+    """
+    수집 시각을 포함한 RAW CSV 파일 경로를 생성한다.
+
+    Args:
+        directory:
+            RAW CSV를 저장할 배치 폴더
+
+        collected_at:
+            수집 기준 시각.
+            지정하지 않으면 APP_TIMEZONE의 현재 시각을 사용
+
+    Returns:
+        RAW CSV 파일 경로
+    """
+
+    if collected_at is None:
+        collected_at = datetime.now(APP_TIMEZONE)
+
+    timestamp = collected_at.strftime('%y%m%d_%H%M%S')
+
     return directory / f'marathon_schedule_raw_{timestamp}.csv'
 
 
@@ -361,13 +463,17 @@ def save_raw_csv(
             폴더 생성 또는 CSV 파일 저장에 실패한 경우
     """
 
-    directory.mkdir(parents=True, exist_ok=True)
-    file_path = build_raw_file_path(directory)
+    collected_at = datetime.now(APP_TIMEZONE)
+
+    raw_batch_dir = build_raw_batch_dir(directory, collected_at)
+
+    file_path = build_raw_file_path(raw_batch_dir, collected_at)
     temp_path = file_path.with_suffix('.tmp.csv')
 
     try:
         df.to_csv(temp_path, encoding='utf-8-sig', index=False)
         temp_path.replace(file_path)
+
     except Exception:
         if temp_path.exists():
             temp_path.unlink()

@@ -5,42 +5,39 @@ import pytest
 
 from src.data_collection_pipeline.config import APP_TIMEZONE
 from src.data_collection_pipeline.extract import (
+    build_raw_batch_dir,
     build_raw_file_path,
     save_raw_csv,
     verify_saved_raw_csv,
 )
 
 
+def test_build_raw_batch_dir(tmp_path):
+    """수집 시각을 기준으로 RAW 배치 폴더가 생성되는가"""
+
+    collected_at = datetime(2026, 9, 9, 10, 30, 15, tzinfo=APP_TIMEZONE)
+
+    result = build_raw_batch_dir(
+        directory=tmp_path,
+        collected_at=collected_at,
+    )
+
+    expected_dir = tmp_path / '260909_103015'
+
+    assert result == expected_dir
+    assert result.exists()
+    assert result.is_dir()
+
+
 def test_build_raw_file_path(tmp_path):
     """raw csv파일명이 패턴에 맞게 작성되었는가"""
 
-    result = build_raw_file_path(tmp_path)
+    collected_at = datetime(2026, 9, 9, 10, 30, 15, tzinfo=APP_TIMEZONE)
+    result = build_raw_file_path(tmp_path, collected_at)
 
     assert result.parent == tmp_path
-    assert result.name.startswith('marathon_schedule_raw_')
+    assert result.name == ('marathon_schedule_raw_260909_103015.csv')
     assert result.suffix == '.csv'
-
-def test_build_raw_file_path_uses_app_timezone(tmp_path):
-    """raw csv 파일명에 APP_TIMEZONE 시간이 형식에 맞게 작성되었는가"""
-
-    before = datetime.now(APP_TIMEZONE).replace(microsecond=0)
-
-    result = build_raw_file_path(tmp_path)
-
-    after = datetime.now(APP_TIMEZONE).replace(microsecond=0)
-
-    timestamp_text = result.stem.replace('marathon_schedule_raw_', '')
-
-    result_datetime = datetime.strptime(
-        timestamp_text,
-        '%y%m%d_%H%M%S',
-    ).replace(tzinfo=APP_TIMEZONE)
-
-    assert (
-        before
-        <= result_datetime
-        <= after
-    )
 
 
 def test_save_raw_csv_creates_file(tmp_path):
@@ -83,6 +80,7 @@ def test_save_raw_csv_preserves_data(tmp_path):
 
     assert len(saved_df) == 1
     assert saved_df.loc[0, 'title'] == '서울 테스트 마라톤'
+    assert saved_df.loc[0, 'region'] == '서울'
 
 
 def test_verify_saved_raw_csv_success(tmp_path):

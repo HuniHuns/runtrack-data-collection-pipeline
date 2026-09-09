@@ -19,27 +19,19 @@ runtrack-data-collection-pipeline/
 │  └─ workflows/
 │     └─ ci.yml
 │
-├─ data/
-│  ├─ raw/
-│  │  ├─ marathon_schedule_raw_YYMMDD_HHMMSS.csv
-│  │  └─ ...
-│  │
-│  └─ processed/
-│     ├─ marathon_schedule_processed_YYMMDD_HHMMSS.csv
-│     └─ ...
-│
 ├─ src/
 │  └─ data_collection_pipeline/
 │     ├─ __init__.py
+│     ├─ config.py
+│     ├─ database.py
 │     ├─ extract.py
-│     ├─ transform.py
-│     └─ load.py
+│     ├─ load.py
+│     └─ transform.py
 │
 ├─ tests/
 │  ├─ test_extract.py
 │  └─ test_transform.py
 │
-├─ .env
 ├─ .env.example
 ├─ .gitignore
 ├─ main.py
@@ -50,85 +42,13 @@ runtrack-data-collection-pipeline/
 ```
 
 현재 파이프라인은 별도의 `interim` 단계 없이 **원본 CSV → 전처리 완료 CSV → MySQL** 흐름으로 구성됩니다.
+`.aws-sam/`, `.venv/`, `data/`, `.env` 등은 실행 환경 또는 빌드 산출물이므로 Git에서 제외합니다.
 
 ---
 
-## 2. 디렉터리 및 파일 설명
+## 2. 주요 Python 모듈
 
-### `data/`
-
-파이프라인 실행 과정에서 생성되는 CSV 데이터를 저장합니다.
-
-### `data/raw/`
-
-`runfor.kr`에서 수집한 **원본 마라톤 일정 데이터**를 CSV로 저장합니다.
-
-파일 형식:
-
-```text
-data/raw/marathon_schedule_raw_YYMMDD_HHMMSS.csv
-```
-
-예:
-
-```text
-data/raw/marathon_schedule_raw_260831_113015.csv
-```
-
-한 번의 Extract 실행마다 새로운 timestamp를 가진 파일을 생성하므로 이전 수집 결과를 유지할 수 있습니다.
-
-RAW CSV의 주요 컬럼은 다음과 같습니다.
-
-| 컬럼 | 설명 |
-|---|---|
-| `title` | 대회명 |
-| `race_status` | 대회 상태 |
-| `region` | 개최 지역 |
-| `location` | 대회 장소 |
-| `course` | 경기 종목/코스 |
-| `race_date` | 대회 일자 |
-| `registration_period` | 접수 기간 원본 문자열 |
-| `assembly_time` | 집결 시간 |
-| `organizer` | 주최 기관 |
-| `official_url` | 공식 홈페이지 URL |
-| `phone` | 문의 전화번호 |
-| `email` | 문의 이메일 |
-
-### `data/processed/`
-
-RAW CSV를 정제·표준화하고 데이터 검증을 완료한 최종 CSV를 저장합니다.
-
-파일 형식:
-
-```text
-data/processed/marathon_schedule_processed_YYMMDD_HHMMSS.csv
-```
-
-예:
-
-```text
-data/processed/marathon_schedule_processed_260831_113120.csv
-```
-
-Processed CSV는 다음 컬럼 순서로 저장됩니다.
-
-```text
-title
-race_status
-region
-location
-course
-race_date
-registration_start_date
-registration_end_date
-assembly_time
-organizer
-official_url
-phone
-email
-```
-
-### `src/data_collection_pipeline/`
+### `extract.py`, `transform.py`, `load.py`
 
 ETL 단계별 코드를 재사용 가능한 Python 모듈로 관리합니다.
 
@@ -148,7 +68,6 @@ src/
 | `extract.py` | `runfor.kr`의 대회 목록 및 상세 정보를 수집하고 RAW CSV 생성 |
 | `transform.py` | RAW 데이터를 정제·표준화·검증하고 Processed CSV 생성 |
 | `load.py` | Processed CSV를 검증하고 MySQL 테이블에 저장 |
-| `__init__.py` | `run_extract`, `run_transform`, `run_load`를 패키지 외부에 제공 |
 
 ### `.env`
 
@@ -202,12 +121,14 @@ load_summary = run_load(
 
 ```text
 PROJECT_DIR
+DEFAULT_DATA_DIR
 DATA_DIR
 RAW_DIR
 PROCESSED_DIR
 ENV_FILE
 
 TARGET_URL
+SOURCE_SITE
 
 WAIT_TIMEOUT
 CONNECT_TIMEOUT
@@ -217,6 +138,9 @@ LOAD_MORE_SELECTOR
 
 RAW_CSV_PATTERN
 PROCESSED_CSV_PATTERN
+
+CHROMIUM_BINARY
+CHROMEDRIVER_PATH
 
 APP_TIMEZONE
 ```
@@ -264,7 +188,7 @@ runfor.kr
    ↓
 run_extract()
    ↓
-data/raw/
+data/raw/260831_113015
 └─ marathon_schedule_raw_260831_113015.csv
    ↓
 run_transform(raw_csv_file)
@@ -652,47 +576,7 @@ marathon_schedule
 
 ---
 
-## 6. 파일 단위 실행 관리
-
-강사 예제처럼 별도의 batch 디렉터리를 생성하지 않고, 현재 프로젝트는 **각 CSV 파일명에 실행 시각을 포함하는 방식**으로 수집 이력을 관리합니다.
-
-형식:
-
-```text
-YYMMDD_HHMMSS
-```
-
-예:
-
-```text
-260831_113015
-```
-
-의미:
-
-```text
-2026년 08월 31일 11시 30분 15초
-```
-
-여러 번 실행하면 다음과 같이 파일이 누적됩니다.
-
-```text
-data/raw/
-├─ marathon_schedule_raw_260831_110000.csv
-├─ marathon_schedule_raw_260831_113015.csv
-└─ marathon_schedule_raw_260831_120000.csv
-
- data/processed/
-├─ marathon_schedule_processed_260831_110110.csv
-├─ marathon_schedule_processed_260831_113120.csv
-└─ marathon_schedule_processed_260831_120105.csv
-```
-
-`run_transform()`과 `run_load()`에 파일 경로를 전달하지 않으면 각 디렉터리에서 파일명 기준 최신 CSV를 탐색할 수 있습니다.
-
----
-
-## 7. 단계별 데이터 상태
+## 6. 단계별 데이터 상태
 
 | 단계 | 저장 위치 | 데이터 상태 |
 |---|---|---|
@@ -702,7 +586,7 @@ data/raw/
 
 ---
 
-## 8. 실행 환경 설정
+## 7. 실행 환경 설정
 
 ### 실행 패키지 설치
 
@@ -772,7 +656,7 @@ DB_PASSWORD
 
 ---
 
-## 9. 전체 파이프라인 실행
+## 8. 전체 파이프라인 실행
 
 프로젝트 루트에서 실행합니다.
 
@@ -823,7 +707,7 @@ load_summary = run_load(
 
 ---
 
-## 10. 테스트
+## 9. 테스트
 
 테스트 코드는 `tests/`에 위치합니다.
 
@@ -865,7 +749,7 @@ testpaths = ["tests"]
 
 ---
 
-## 11. Ruff 코드 품질 검사
+## 10. Ruff 코드 품질 검사
 
 Ruff를 이용하여 Python 코드의 기본 오류와 코드 스타일을 검사합니다.
 
@@ -911,7 +795,7 @@ Python 3.13
 
 ---
 
-## 12. GitHub Actions CI
+## 11. GitHub Actions CI
 
 CI workflow는 다음 위치에 있습니다.
 
@@ -956,7 +840,7 @@ python -m pytest -v
 
 ---
 
-## 13. Git 관리 정책
+## 12. Git 관리 정책
 
 이 프로젝트는 블랙리스트 방식의 `.gitignore`를 사용합니다.
 
@@ -993,7 +877,7 @@ dist/
 
 ---
 
-## 14. 프로젝트 설계 원칙
+## 13. 프로젝트 설계 원칙
 
 이 프로젝트는 다음 원칙을 기준으로 구성합니다.
 
@@ -1012,7 +896,7 @@ dist/
 
 ---
 
-## 15. 전체 파이프라인 요약
+## 14. 전체 파이프라인 요약
 
 ```text
 [Extract]
