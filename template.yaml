@@ -38,6 +38,32 @@ Parameters:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security Group ID for RUNTRACK Load Lambda
 
+  ScheduleEnabled:
+    Type: String
+    Default: 'true'
+
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+    Description: Enable or disable EventBridge Scheduler
+
+  ScheduleExpression:
+    Type: String
+    Default: 'cron(40 2 * * ? *)'
+    Description: EventBridge Scheduler cron expression
+
+## ===========================================================
+## Conditions
+## 조건에 따라 AWS 리소스 속성을 동적으로 결정
+## ===========================================================
+
+Conditions:
+
+  ## ScheduleEnabled 값이 true인지 확인
+  IsScheduleEnabled: !Equals
+    - !Ref ScheduleEnabled
+    - 'true'
 
 # ============================================================
 # AWS Resources
@@ -365,6 +391,111 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref LoadFunction
 
+  # ==========================================================
+  # EventBridge Scheduler IAM Role
+  # ==========================================================
+
+  PipelineSchedulerRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      ## IAM Role 신뢰 정책
+      ## EventBridge Scheduler가 이 Role을 사용할 수 있도록 허용
+      AssumeRolePolicyDocument:
+
+        Version:
+          '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+
+              Service:
+                - scheduler.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+
+      # ======================================================
+      # Scheduler → Step Functions 실행 권한
+      # ======================================================
+
+      Policies:
+
+        - PolicyName: StartRuntrackPipelineStateMachine
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Effect: Allow
+
+                Action:
+                  - states:StartExecution
+
+                Resource:
+                  - !Ref PipelineStateMachine
+
+
+  # ==========================================================
+  # EventBridge Scheduler
+  # 지정된 시간에 RUNTRACK Step Functions 자동 실행
+  # ==========================================================
+
+  PipelineSchedule:
+    Type: AWS::Scheduler::Schedule
+
+    Properties:
+
+      Name:
+        runtrack-pipeline-schedule
+
+      Description: >
+        RUNTRACK 마라톤 데이터 수집 Step Functions를
+        정해진 시간에 자동 실행하는 Scheduler
+
+
+      ## Scheduler 활성화 상태
+      ## ScheduleEnabled=true  → ENABLED
+      ## ScheduleEnabled=false → DISABLED
+      State: !If
+        - IsScheduleEnabled
+        - ENABLED
+        - DISABLED
+
+      ## 실행 Cron 표현식
+      ScheduleExpression: !Ref ScheduleExpression
+
+      ## Cron 표현식이 해석될 시간대
+      ScheduleExpressionTimezone: Asia/Seoul
+
+
+      ## Flexible Time Window 사용하지 않음
+      ## 지정된 스케줄 시간에 실행
+      FlexibleTimeWindow:
+        Mode:
+          'OFF'
+
+
+      ## Scheduler가 실행할 대상
+      Target:
+
+        # Step Functions ARN
+        Arn: !Ref PipelineStateMachine
+
+        # Scheduler가 사용할 IAM Role
+        RoleArn: !GetAtt PipelineSchedulerRole.Arn
+
+        ## Step Functions 최초 입력 Event
+        Input:
+          '{}'
+
 
 # ============================================================
 # Outputs
@@ -407,3 +538,15 @@ Outputs:
   PipelineStateMachineArn:
     Description: RUNTRACK Pipeline Step Functions State Machine ARN
     Value: !Ref PipelineStateMachine
+
+  PipelineScheduleName:
+    Description: RUNTRACK Pipeline EventBridge Scheduler Name
+    Value: !Ref PipelineSchedule
+
+  PipelineScheduleArn:
+    Description: RUNTRACK Pipeline EventBridge Scheduler ARN
+    Value: !GetAtt PipelineSchedule.Arn
+
+  PipelineSchedulerRoleArn:
+    Description: RUNTRACK EventBridge Scheduler IAM Role ARN
+    Value: !GetAtt PipelineSchedulerRole.Arn
