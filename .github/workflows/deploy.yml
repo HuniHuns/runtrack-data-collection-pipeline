@@ -146,6 +146,7 @@ jobs:
             --stack-name runtrack-pipeline \
             --region "${{ vars.AWS_REGION }}" \
             --resolve-s3 \
+            --resolve-image-repos \
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
